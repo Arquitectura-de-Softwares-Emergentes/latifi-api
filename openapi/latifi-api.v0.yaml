@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: LatiFi API
+  version: 0.1.0
+  description: >-
+    Draft contract of the Identity/Wallet, Reputation and Exchange Rate contexts of LatiFi API, as
+    described in Chapter V of the project report. Phase 4 builds the Spring controllers from this
+    file and Phase 5 builds the Android clients from it.
+servers:
+  - url: /api/v1
+    description: Base path of every operation. Paths below are written without it.
+tags:
+  - name: Auth
+    description: Wallet signature login. No password and no key ever reaches the server.
+  - name: Profiles
+    description: Lightweight user profile bound to a wallet address.
+  - name: Reputation
+    description: Hybrid reputation score and its event history.
+  - name: Loans
+    description: Read model of the loans that the indexer mirrors from the chain.
+  - name: ExchangeRate
+    description: Display-only conversion from the stablecoin to a local currency.
+security:
+  - bearerAuth: []
+paths:
+  /auth/challenge:
+    post:
+      tags: [Auth]
+      operationId: issueChallenge
+      summary: Request a sign-in challenge for a wallet address
+      description: >-
+        Issues a random single-use nonce for the address. The nonce expires after 5 minutes. The
+        wallet signs the returned message as an EIP-191 personal message and sends the signature to
+        the verify operation. Listed in report section 5.2.2.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChallengeRequest'
+      responses:
+        '200':
+          description: Challenge issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChallengeResponse'
+        '400':
+          description: The address is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: Too many challenge requests from this client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Session token returned by the verify operation.
+  parameters:
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      description: Language of error messages. English is the default and es_419 is supported.
+      schema:
+        type: string
+        enum: [en_US, es_419]
+        default: en_US
+  schemas:
+    Address:
+      type: string
+      pattern: '^0x[0-9a-fA-F]{40}$'
+      description: Wallet address, 0x followed by 40 hex digits.
+      example: '0x1111111111111111111111111111111111111111'
+    ApiError:
+      type: object
+      required: [status, code, message]
+      properties:
+        status:
+          type: integer
+          description: HTTP status code of the response.
+          example: 400
+        code:
+          type: string
+          description: Stable machine readable error code.
+          example: INVALID_ADDRESS
+        message:
+          type: string
+          description: Human readable message, localized by Accept-Language.
+          example: The address is not a valid wallet address.
+    ChallengeRequest:
+      type: object
+      required: [address]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+    ChallengeResponse:
+      type: object
+      required: [challengeId, nonce, message, issuedAt, expiresAt]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+          example: 3f2b8c1e-5d4a-4c7b-9a10-2e6f7d8c9b01
+        nonce:
+          type: string
+          description: Random single-use value embedded in the message.
+          example: 9c1d4f7a2b8e4d3f
+        message:
+          type: string
+          description: Exact text the wallet signs as an EIP-191 personal message.
+          example: 'LatiFi sign-in. Nonce: 9c1d4f7a2b8e4d3f'
+        issuedAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+        expiresAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:05:00Z'
