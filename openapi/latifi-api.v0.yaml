@@ -6,6 +6,14 @@ info:
     Draft contract of the Identity/Wallet, Reputation and Exchange Rate contexts of LatiFi API, as
     described in Chapter V of the project report. Phase 4 builds the Spring controllers from this
     file and Phase 5 builds the Android clients from it.
+
+
+    Conventions. Quantities that come from a uint256 (loan amounts, loan identifiers) travel as
+    JSON strings of digits, in base units of the test stablecoin (6 decimals), because Kotlin and
+    JavaScript clients lose precision on large integers. Timestamps are RFC 3339 date-time strings.
+    Paged responses share the envelope items, page, size and totalItems. Every error body is an
+    ApiError. Local currency values exist only in the exchange rate operations and are display
+    only.
 servers:
   - url: /api/v1
     description: Base path of every operation. Paths below are written without it.
@@ -31,7 +39,7 @@ paths:
       description: >-
         Issues a random single-use nonce for the address. The nonce expires after 5 minutes. The
         wallet signs the returned message as an EIP-191 personal message and sends the signature to
-        the verify operation. Listed in report section 5.2.2.
+        the verify operation. Serves US-AUTH-01 and US-AUTH-02. Listed in report section 5.2.2.
       security: []
       parameters:
         - $ref: '#/components/parameters/AcceptLanguage'
@@ -49,17 +57,333 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChallengeResponse'
         '400':
-          description: The address is malformed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '429':
-          description: Too many challenge requests from this client.
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyChallenge
+      summary: Exchange a signed challenge for a session token
+      description: >-
+        Accepts the challenge identifier, the declared address and the signature of the challenge
+        message. The API recovers the signer and accepts only when it equals both the declared
+        address and the address the challenge was issued for, and the challenge is unused and
+        younger than 5 minutes. A wrong signer, a replayed challenge, an expired challenge and an
+        unknown challenge all return 401, so a caller cannot tell them apart. The challenge is
+        consumed on the first successful use. Serves US-AUTH-01 and US-AUTH-02. Listed in report
+        section 5.2.2.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Signature accepted, session token issued.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /profiles/{address}:
+    get:
+      tags: [Profiles]
+      operationId: getProfile
+      summary: Read the profile bound to an address
+      description: >-
+        Returns the display name of the profile. The contact is included only when the address is
+        the one of the authenticated caller, and it is never returned for any other address. Serves
+        US-IDEN-02. Listed in report section 5.2.2.
+      parameters:
+        - $ref: '#/components/parameters/AddressPath'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Profiles]
+      operationId: upsertProfile
+      summary: Create or update the profile of the caller
+      description: >-
+        Creates the profile when none exists (201) and replaces it otherwise (200). Only the owner
+        of the address may write, any other caller receives 403. A complete profile (name and
+        contact) unlocks publishing and funding in the app. Serves US-IDEN-01 and US-IDEN-02.
+        Listed in report section 5.2.2.
+      parameters:
+        - $ref: '#/components/parameters/AddressPath'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: The existing profile was updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '201':
+          description: The profile was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /reputation/{address}:
+    get:
+      tags: [Reputation]
+      operationId: getReputation
+      summary: Read the reputation of an address
+      description: >-
+        Returns the score (0 to 100), the level and the counters of a borrower. An address with a
+        profile but no loans yet gets the initial off-chain score. Serves US-REP-02 and US-API-01.
+        Listed in report section 5.3.2.
+      parameters:
+        - $ref: '#/components/parameters/AddressPath'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: The reputation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /reputation/{address}/history:
+    get:
+      tags: [Reputation]
+      operationId: getReputationHistory
+      summary: List the reputation events behind a score
+      description: >-
+        Returns a page of reputation events, newest first, each with the transaction reference
+        (txHash and logIndex) that produced it. The optional type filter serves the result chips of
+        the reputation screen (on time, late, defaulted). Serves US-API-01. Listed in report
+        section 5.3.2. There is no top-level history route.
+      parameters:
+        - $ref: '#/components/parameters/AddressPath'
+        - name: type
+          in: query
+          required: false
+          description: Keep only events of this type.
+          schema:
+            $ref: '#/components/schemas/ReputationEventType'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: A page of reputation events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationHistoryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /loans:
+    get:
+      tags: [Loans]
+      operationId: listLoans
+      summary: List loans with filters and a sort order
+      description: >-
+        Returns a page of loans mirrored from the chain events. It feeds the lender opportunities
+        feed, the borrower loan list and the lender portfolio, depending on the filters. The
+        default order is reputation, highest borrower score first, so the lender reviews the safest
+        requests first. Every loan carries the reputation of its borrower. No field of a loan holds
+        a local currency value, the app asks the exchange rate operations for that. Serves
+        US-LEND-02, US-REP-03 and US-LEND-05. Listed in report section 5.3.2 and used by the
+        searching systems of report section 6.2.3.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Keep only loans in this state.
+          schema:
+            $ref: '#/components/schemas/LoanStatus'
+        - name: minAmount
+          in: query
+          required: false
+          description: Smallest principal, in stablecoin base units.
+          schema:
+            $ref: '#/components/schemas/Uint256'
+        - name: maxAmount
+          in: query
+          required: false
+          description: Largest principal, in stablecoin base units.
+          schema:
+            $ref: '#/components/schemas/Uint256'
+        - name: maxTermDays
+          in: query
+          required: false
+          description: Longest term in days.
+          schema:
+            type: integer
+            minimum: 1
+            example: 30
+        - name: minLevel
+          in: query
+          required: false
+          description: Lowest borrower reputation level to include.
+          schema:
+            $ref: '#/components/schemas/ReputationLevel'
+        - name: borrower
+          in: query
+          required: false
+          description: Keep only loans requested by this address.
+          schema:
+            $ref: '#/components/schemas/Address'
+        - name: lender
+          in: query
+          required: false
+          description: Keep only loans funded by this address.
+          schema:
+            $ref: '#/components/schemas/Address'
+        - name: sort
+          in: query
+          required: false
+          description: >-
+            Sort order. reputation is the borrower score, highest first. amount is the principal,
+            largest first. term is the term, shortest first. rate is the interest rate, highest
+            first. recent is the request time, newest first. nextDue is the next installment due
+            date, soonest first.
+          schema:
+            type: string
+            enum: [reputation, amount, term, rate, recent, nextDue]
+            default: reputation
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: A page of loans.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /loans/{loanId}:
+    get:
+      tags: [Loans]
+      operationId: getLoan
+      summary: Read one loan with its status and borrower reputation
+      description: >-
+        Returns the same LoanSummary as the list. Serves US-LEND-05. Listed in report section
+        5.3.2.
+      parameters:
+        - $ref: '#/components/parameters/LoanIdPath'
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: The loan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /exchange-rate/convert:
+    get:
+      tags: [ExchangeRate]
+      operationId: convertAmount
+      summary: Convert a stablecoin amount to a local currency
+      description: >-
+        Converts an amount in stablecoin base units to the requested currency using the cached
+        rate. The stablecoin is treated as one US dollar, and the value is for display only: it
+        never changes what is signed or stored on-chain. When the provider is down the last cached
+        rate is served with status 200 and stale set to true. An unsupported currency returns 400
+        with a message localized by Accept-Language. Serves US-API-02 and US-LEND-06. Listed in
+        report section 5.4.2.
+      parameters:
+        - name: amount
+          in: query
+          required: true
+          description: Amount in stablecoin base units (6 decimals).
+          schema:
+            type: string
+            pattern: '^[0-9]{1,78}$'
+            example: '250000000'
+        - name: currency
+          in: query
+          required: true
+          description: ISO 4217 code of the target currency, three uppercase letters.
+          schema:
+            type: string
+            pattern: '^[A-Z]{3}$'
+            example: PEN
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: The converted value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /exchange-rate/rates:
+    get:
+      tags: [ExchangeRate]
+      operationId: listRates
+      summary: List the available rates and their age
+      description: >-
+        Returns one quote per supported currency with the instant of the rate and the stale flag.
+        Serves US-API-02. Listed in report section 5.4.2.
+      parameters:
+        - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: The available rates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
   securitySchemes:
     bearerAuth:
@@ -77,12 +401,88 @@ components:
         type: string
         enum: [en_US, es_419]
         default: en_US
+    AddressPath:
+      name: address
+      in: path
+      required: true
+      description: Wallet address.
+      schema:
+        $ref: '#/components/schemas/Address'
+    LoanIdPath:
+      name: loanId
+      in: path
+      required: true
+      description: Loan identifier assigned by the contract.
+      schema:
+        $ref: '#/components/schemas/Uint256'
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Zero based page index.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    BadRequest:
+      description: The request is malformed or a value is not supported.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Unauthorized:
+      description: The bearer token is missing, invalid or expired, or the signature was rejected.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Forbidden:
+      description: The caller does not own the address.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    TooManyRequests:
+      description: Too many requests from this client. The implementation must rate limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
   schemas:
     Address:
       type: string
       pattern: '^0x[0-9a-fA-F]{40}$'
       description: Wallet address, 0x followed by 40 hex digits.
       example: '0x1111111111111111111111111111111111111111'
+    Uint256:
+      type: string
+      pattern: '^[0-9]{1,78}$'
+      description: >-
+        Unsigned integer as a string of digits. For amounts it is in stablecoin base units, where
+        1000000 is one token.
+      example: '250000000'
+    DecimalString:
+      type: string
+      pattern: '^[0-9]+(\.[0-9]+)?$'
+      description: Non negative decimal number as a string, so no client rounds it.
+      example: '3.7512'
     ApiError:
       type: object
       required: [status, code, message]
@@ -129,3 +529,347 @@ components:
           type: string
           format: date-time
           example: '2026-01-01T12:05:00Z'
+    VerifyRequest:
+      type: object
+      required: [challengeId, address, signature]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+          example: 3f2b8c1e-5d4a-4c7b-9a10-2e6f7d8c9b01
+        address:
+          $ref: '#/components/schemas/Address'
+        signature:
+          type: string
+          pattern: '^0x[0-9a-fA-F]{130}$'
+          description: 65 byte signature (r, s and v) of the challenge message, as 0x hex.
+          example: '0x1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111'
+    TokenResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn, address]
+      properties:
+        accessToken:
+          type: string
+          description: Session token to send as a bearer credential.
+          example: eyJhbGciOiJIUzI1NiJ9.example.signature
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          description: Lifetime of the token in seconds.
+          example: 3600
+        address:
+          $ref: '#/components/schemas/Address'
+    ContactType:
+      type: string
+      enum: [EMAIL, PHONE]
+    Contact:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          $ref: '#/components/schemas/ContactType'
+        value:
+          type: string
+          minLength: 3
+          maxLength: 254
+          example: user@example.org
+    ProfileUpdateRequest:
+      type: object
+      required: [displayName, contact]
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+          example: Sample User
+        contact:
+          $ref: '#/components/schemas/Contact'
+    ProfileResponse:
+      type: object
+      required: [address, displayName, createdAt, updatedAt]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        displayName:
+          type: string
+          maxLength: 80
+          example: Sample User
+        contact:
+          allOf:
+            - $ref: '#/components/schemas/Contact'
+          description: Present only when the caller owns the address.
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+    ReputationLevel:
+      type: string
+      enum: [NEW, BUILDING, TRUSTED, EXCELLENT]
+    ReputationResponse:
+      type: object
+      required:
+        - address
+        - score
+        - level
+        - onTimeCount
+        - lateCount
+        - defaultCount
+        - profileComplete
+        - updatedAt
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 62
+        level:
+          $ref: '#/components/schemas/ReputationLevel'
+        onTimeCount:
+          type: integer
+          minimum: 0
+          example: 3
+        lateCount:
+          type: integer
+          minimum: 0
+          example: 1
+        defaultCount:
+          type: integer
+          minimum: 0
+          example: 0
+        profileComplete:
+          type: boolean
+          description: Whether the off-chain profile signal was counted.
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+    ReputationEventType:
+      type: string
+      enum: [PROFILE_COMPLETED, REPAID_ON_TIME, REPAID_LATE, DEFAULTED]
+    ReputationEvent:
+      type: object
+      required: [id, type, delta, scoreAfter, txHash, logIndex, occurredAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 41
+        loanId:
+          type: string
+          nullable: true
+          pattern: '^[0-9]{1,78}$'
+          description: Loan that produced the event. Null for PROFILE_COMPLETED.
+          example: '7'
+        type:
+          $ref: '#/components/schemas/ReputationEventType'
+        delta:
+          type: integer
+          description: Change applied to the score.
+          example: 10
+        scoreAfter:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 62
+        daysLate:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: Days past the due date. Only set for REPAID_LATE and DEFAULTED.
+        txHash:
+          type: string
+          pattern: '^0x[0-9a-fA-F]{64}$'
+          description: Transaction that emitted the source event. With logIndex it is the idempotency key.
+          example: '0x2222222222222222222222222222222222222222222222222222222222222222'
+        logIndex:
+          type: integer
+          minimum: 0
+          example: 0
+        occurredAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+    ReputationHistoryPage:
+      type: object
+      required: [items, page, size, totalItems]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReputationEvent'
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+        totalItems:
+          type: integer
+          format: int64
+          minimum: 0
+    LoanStatus:
+      type: string
+      enum: [OPEN, ACTIVE, REPAID, DEFAULTED]
+    BorrowerReputation:
+      type: object
+      required: [score, level]
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 62
+        level:
+          $ref: '#/components/schemas/ReputationLevel'
+    LoanSummary:
+      type: object
+      required:
+        - loanId
+        - borrower
+        - principal
+        - interestRateBps
+        - termDays
+        - installments
+        - status
+        - amountRepaid
+        - totalDue
+        - installmentsPaid
+        - requestedAt
+        - borrowerReputation
+      properties:
+        loanId:
+          $ref: '#/components/schemas/Uint256'
+        borrower:
+          $ref: '#/components/schemas/Address'
+        lender:
+          type: string
+          nullable: true
+          pattern: '^0x[0-9a-fA-F]{40}$'
+          description: Funding address. Null until the loan is funded.
+          example: '0x3333333333333333333333333333333333333333'
+        principal:
+          $ref: '#/components/schemas/Uint256'
+        interestRateBps:
+          type: integer
+          minimum: 0
+          description: Flat interest over the whole term, in basis points.
+          example: 1000
+        termDays:
+          type: integer
+          minimum: 1
+          example: 30
+        installments:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: Number of equal installments. 1 is a single payment.
+          example: 3
+        status:
+          $ref: '#/components/schemas/LoanStatus'
+        amountRepaid:
+          $ref: '#/components/schemas/Uint256'
+        totalDue:
+          $ref: '#/components/schemas/Uint256'
+        installmentsPaid:
+          type: integer
+          minimum: 0
+          maximum: 6
+          example: 1
+        requestedAt:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+        fundedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null until the loan is funded.
+          example: '2026-01-02T12:00:00Z'
+        finalDueDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Due date of the last installment. Null until the loan is funded.
+          example: '2026-02-01T12:00:00Z'
+        nextDueDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Due date of the next unpaid installment. Null when none is pending.
+          example: '2026-01-12T12:00:00Z'
+        borrowerReputation:
+          $ref: '#/components/schemas/BorrowerReputation'
+    LoanPage:
+      type: object
+      required: [items, page, size, totalItems]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoanSummary'
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+        totalItems:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total matches, used for the result counter of the app.
+    ConvertResponse:
+      type: object
+      required: [amount, currency, value, rate, asOf, stale]
+      properties:
+        amount:
+          $ref: '#/components/schemas/Uint256'
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: PEN
+        value:
+          $ref: '#/components/schemas/DecimalString'
+        rate:
+          $ref: '#/components/schemas/DecimalString'
+        asOf:
+          type: string
+          format: date-time
+          description: Instant of the rate that produced the value.
+          example: '2026-01-01T12:00:00Z'
+        stale:
+          type: boolean
+          description: True when the provider is down and the last cached rate was used.
+    RateQuote:
+      type: object
+      required: [base, quote, rate, asOf, stale]
+      properties:
+        base:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: Currency the stablecoin is priced in, US dollar.
+          example: USD
+        quote:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: PEN
+        rate:
+          $ref: '#/components/schemas/DecimalString'
+        asOf:
+          type: string
+          format: date-time
+          example: '2026-01-01T12:00:00Z'
+        stale:
+          type: boolean
+    RateList:
+      type: array
+      items:
+        $ref: '#/components/schemas/RateQuote'
