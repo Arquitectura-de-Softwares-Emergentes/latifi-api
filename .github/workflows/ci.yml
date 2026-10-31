@@ -35,6 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # redocly/cli 2.70.0, published 2026-10-23, pinned by the digest of its image index.
+      - name: Validate the OpenAPI draft
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/spec" -w /spec redocly/cli@sha256:f09828706881234790394d0f4032b2956c902f093e80ef08ab6ba3234c1aca7a lint openapi/latifi-api.v0.yaml
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
