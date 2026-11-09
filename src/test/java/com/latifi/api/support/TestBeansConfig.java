@@ -1,6 +1,8 @@
 package com.latifi.api.support;
 
 import com.latifi.api.identity.domain.ProfileSaved;
+import com.latifi.api.ledger.domain.BatchDelta;
+import com.latifi.api.ledger.domain.ChainEventListener;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
@@ -42,6 +44,30 @@ public class TestBeansConfig {
       registry.add("latifi.ratelimit.auth-per-ip-capacity", () -> "10");
       registry.add("latifi.ratelimit.challenge-per-address-capacity", () -> "5");
     };
+  }
+
+  @Bean
+  RecordingListener recordingListener() {
+    return new RecordingListener();
+  }
+
+  /** Keeps every batch that the indexer applied, so scenarios can check the listener seam. */
+  public static class RecordingListener implements ChainEventListener {
+
+    private final List<BatchDelta> deltas = new CopyOnWriteArrayList<>();
+
+    @Override
+    public void onBatchApplied(BatchDelta delta) {
+      deltas.add(delta);
+    }
+
+    public List<BatchDelta> deltas() {
+      return List.copyOf(deltas);
+    }
+
+    public void clear() {
+      deltas.clear();
+    }
   }
 
   @Bean

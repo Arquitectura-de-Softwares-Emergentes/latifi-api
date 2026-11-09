@@ -28,6 +28,15 @@ latifi:
     trust-forwarded-for: ${LATIFI_TRUST_FORWARDED_FOR:false}
   chain:
     id: 80002
+    # The public node URL can carry an API key, so it has no default and never enters the repository.
+    rpc-url: ${LATIFI_RPC_URL:}
+    loan-book-address: ${LATIFI_LOANBOOK_ADDRESS:0xccb8ad15a4954138c987a77924ceab468a843266}
+  indexer:
+    enabled: true
+    poll-interval: PT5S
+    batch-size: 500
+    reorg-window: 12
+    start-block: ${LATIFI_INDEXER_START_BLOCK:51675536}
   reputation:
     start-score: 500
     on-time-delta: 20
