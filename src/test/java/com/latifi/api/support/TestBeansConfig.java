@@ -36,6 +36,13 @@ public class TestBeansConfig {
     return new MutableClock(START);
   }
 
+  /** Replaces the HTTP adapter, so no scenario and no test reaches a real rate provider. */
+  @Bean
+  @Primary
+  TestExchangeRateProvider testExchangeRateProvider() {
+    return new TestExchangeRateProvider();
+  }
+
   @Bean
   DynamicPropertyRegistrar jwtSecretRegistrar() {
     return registry -> {

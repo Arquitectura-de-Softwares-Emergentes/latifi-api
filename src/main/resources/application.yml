@@ -45,6 +45,17 @@ latifi:
     default-delta: 200
     profile-bonus: 50
     min-scored-principal: 1000000
+  fx:
+    # The default is the open endpoint of ExchangeRate-API, an aggregator and not a central bank.
+    # Its terms ask for the attribution text "Rates By Exchange Rate API" with a link to
+    # https://www.exchangerate-api.com. A URL that holds the {apiKey} placeholder needs a key.
+    provider-url: ${LATIFI_FX_PROVIDER_URL:https://open.er-api.com/v6/latest/USD}
+    api-key: ${LATIFI_FX_API_KEY:}
+    supported: [PEN, COP, MXN, ARS, BRL, CLP]
+    cache-ttl: PT1H
+    connect-timeout: PT2S
+    read-timeout: PT3S
+    retry-backoff: PT1M
 
 management:
   endpoints:
