@@ -43,8 +43,8 @@ public class IndexerScheduler {
             result.lastBlock());
       }
     } catch (Exception e) {
-      // Only the class name goes to the log: a transport message can quote the node URL.
-      LOG.warn("Indexer cycle failed, the next one retries: {}", e.getClass().getSimpleName());
+      // The text is sanitized, so a message or cause that quotes the node URL cannot leak its key.
+      LOG.warn("Indexer cycle failed, the next one retries: {}", SafeErrorText.of(e));
     }
   }
 }
