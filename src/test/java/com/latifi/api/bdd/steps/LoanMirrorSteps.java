@@ -2,6 +2,8 @@ package com.latifi.api.bdd.steps;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.latifi.api.ledger.application.LoanProjector;
+import com.latifi.api.ledger.domain.BatchDelta;
 import com.latifi.api.support.ChainFixtures;
 import com.latifi.api.support.FakeChainNode;
 import com.latifi.api.support.TestBeansConfig.RecordingListener;
@@ -13,9 +15,13 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -28,14 +34,20 @@ public class LoanMirrorSteps {
   private final FakeChainNode node;
   private final JdbcTemplate jdbc;
   private final RecordingListener listener;
+  private final ApplicationContext context;
 
   private int emitted;
   private List<Map<String, String>> notedRows;
 
-  public LoanMirrorSteps(FakeChainNode node, JdbcTemplate jdbc, RecordingListener listener) {
+  public LoanMirrorSteps(
+      FakeChainNode node,
+      JdbcTemplate jdbc,
+      RecordingListener listener,
+      ApplicationContext context) {
     this.node = node;
     this.jdbc = jdbc;
     this.listener = listener;
+    this.context = context;
   }
 
   @Given(
@@ -85,6 +97,16 @@ public class LoanMirrorSteps {
   @When("the loan rows are noted")
   public void noteRows() {
     notedRows = rows();
+  }
+
+  /** Runs the projector alone over the named loans, as a batch that touched them again. */
+  @When("the loan projection runs again for the loans {string}")
+  public void projectionAgain(String loans) {
+    Set<BigInteger> ids =
+        Arrays.stream(loans.split(","))
+            .map(text -> new BigInteger(text.trim()))
+            .collect(Collectors.toSet());
+    context.getBean(LoanProjector.class).onBatchApplied(new BatchDelta(ids));
   }
 
   @Then("the loan table has {int} row(s)")
