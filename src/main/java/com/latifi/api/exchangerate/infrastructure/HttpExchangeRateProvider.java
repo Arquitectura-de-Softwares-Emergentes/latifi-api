@@ -55,7 +55,8 @@ public class HttpExchangeRateProvider implements ExchangeRateProvider {
     factory.setReadTimeout(properties.readTimeout());
     this.client = RestClient.builder().requestFactory(factory).build();
     this.uri = URI.create(properties.resolvedUrl());
-    this.host = UrlHosts.redact(properties.providerUrl());
+    // Only the host leaves this constructor; the path and the key stay in the URI.
+    this.host = UrlHosts.redact(uri.toString());
   }
 
   @Override

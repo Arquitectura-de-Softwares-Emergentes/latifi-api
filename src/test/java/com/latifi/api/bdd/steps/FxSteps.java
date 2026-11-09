@@ -90,6 +90,13 @@ public class FxSteps {
     get(wallets.tokens().get(reader), CONVERT, "amount=" + amount + "&currency=" + currency);
   }
 
+  @When("the wallet {word} converts {string} base units to {word} {int} times")
+  public void convertsSeveralTimes(String reader, String amount, String currency, int times) {
+    for (int i = 0; i < times; i++) {
+      converts(reader, amount, currency);
+    }
+  }
+
   @When("the wallet {word} converts with the query {string}")
   public void convertsWithQuery(String reader, String query) {
     get(wallets.tokens().get(reader), CONVERT, query);
