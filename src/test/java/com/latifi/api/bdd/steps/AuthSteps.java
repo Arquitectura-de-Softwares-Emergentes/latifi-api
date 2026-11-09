@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.atlassian.oai.validator.model.Request;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.latifi.api.bdd.support.ApiClient;
+import com.latifi.api.bdd.support.TestWallet;
 import com.latifi.api.support.ContractAssertions;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
@@ -12,6 +13,7 @@ import io.cucumber.java.en.When;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,7 +26,12 @@ public class AuthSteps {
   private final ApiClient api;
   private final JdbcTemplate jdbc;
 
+  private static final String VERIFY_PATH = "/api/v1/auth/verify";
+  private static final String PROBE_PATH = "/api/v1/auth/session-probe";
+
   private String address;
+  private TestWallet wallet;
+  private String token;
   private final List<JsonNode> challenges = new ArrayList<>();
 
   public AuthSteps(ApiClient api, JdbcTemplate jdbc) {
@@ -35,6 +42,12 @@ public class AuthSteps {
   @Given("a wallet address generated at run time")
   public void aWalletAddressGeneratedAtRunTime() throws Exception {
     address = "0x" + Keys.getAddress(Keys.createEcKeyPair());
+  }
+
+  @Given("a wallet generated at run time")
+  public void aWalletGeneratedAtRunTime() {
+    wallet = TestWallet.create();
+    address = wallet.address();
   }
 
   @When("the client requests a sign-in challenge for that address")
@@ -58,6 +71,73 @@ public class AuthSteps {
     if (api.status() == 200) {
       challenges.add(api.json());
     }
+  }
+
+  @When("the wallet signs the challenge message and verifies it")
+  public void theWalletSignsAndVerifies() {
+    JsonNode challenge = challenges.get(challenges.size() - 1);
+    verify(
+        challenge.get("challengeId").asText(),
+        wallet.address(),
+        wallet.sign(challenge.get("message").asText()));
+  }
+
+  private void verify(String challengeId, String declaredAddress, String signature) {
+    api.post(
+        VERIFY_PATH,
+        "{\"challengeId\":\"%s\",\"address\":\"%s\",\"signature\":\"%s\"}"
+            .formatted(challengeId, declaredAddress, signature));
+    if (api.status() == 200) {
+      token = api.json().get("accessToken").asText();
+    }
+  }
+
+  @Then("the verify response conforms to the API contract")
+  public void theVerifyResponseConforms() {
+    ContractAssertions.assertResponseConforms(
+        Request.Method.POST, VERIFY_PATH, api.status(), api.header("content-type"), api.body());
+  }
+
+  @Then("the token response is a Bearer token of 900 seconds for the wallet address")
+  public void theTokenResponseIsBearer() {
+    JsonNode body = api.json();
+    assertThat(body.get("tokenType").asText()).isEqualTo("Bearer");
+    assertThat(body.get("expiresIn").asInt()).isEqualTo(900);
+    assertThat(body.get("address").asText()).isEqualTo(wallet.address());
+  }
+
+  @Then("the token names the wallet as subject, latifi-api as issuer and lives 900 seconds")
+  public void theTokenClaims() throws Exception {
+    JsonNode claims = decodePayload(token);
+    assertThat(claims.get("sub").asText()).isEqualTo(wallet.address());
+    assertThat(claims.get("iss").asText()).isEqualTo("latifi-api");
+    assertThat(claims.get("exp").asLong() - claims.get("iat").asLong()).isEqualTo(900);
+  }
+
+  @Then("the challenge is marked as used")
+  public void theChallengeIsMarkedAsUsed() {
+    String id = challenges.get(challenges.size() - 1).get("challengeId").asText();
+    Object usedAt =
+        jdbc.queryForObject(
+            "select used_at from auth_challenge where id = ?::uuid", Object.class, id);
+    assertThat(usedAt).isNotNull();
+  }
+
+  @When("the client calls the session probe without a token")
+  public void probeWithoutToken() {
+    api.withBearer(null).get(PROBE_PATH);
+  }
+
+  @When("the client calls the session probe with the session token")
+  public void probeWithToken() {
+    api.withBearer(token);
+    api.get(PROBE_PATH);
+  }
+
+  private static JsonNode decodePayload(String jwt) throws Exception {
+    String payload = jwt.split("\\.")[1];
+    byte[] json = Base64.getUrlDecoder().decode(payload);
+    return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
   }
 
   @Then("the response status is {int}")
