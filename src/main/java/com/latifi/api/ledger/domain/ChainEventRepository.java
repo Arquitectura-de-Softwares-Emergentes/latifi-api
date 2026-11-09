@@ -1,5 +1,6 @@
 package com.latifi.api.ledger.domain;
 
+import java.math.BigInteger;
 import java.util.List;
 import java.util.OptionalLong;
 
@@ -33,6 +34,9 @@ public interface ChainEventRepository {
    * @return false when another connection holds the lock
    */
   boolean tryAdvisoryLock(long key);
+
+  /** Every stored event of one loan, ordered by block number and then log index. */
+  List<ChainEvent> findByLoanId(BigInteger loanId);
 
   /** The last block that a finished batch covered, or empty before the first batch. */
   OptionalLong checkpoint();
