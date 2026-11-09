@@ -26,9 +26,17 @@ public interface ChainEventRepository {
    */
   List<ChainEvent> reconcileWindow(long fromBlock, long toBlock, List<ChainEvent> fresh);
 
+  /**
+   * Tries to take the indexer lock for the current transaction without waiting. The lock frees
+   * itself when the transaction ends. Call it first in a batch transaction.
+   *
+   * @return false when another connection holds the lock
+   */
+  boolean tryAdvisoryLock(long key);
+
   /** The last block that a finished batch covered, or empty before the first batch. */
   OptionalLong checkpoint();
 
-  /** Moves the checkpoint to {@code block}. */
+  /** Moves the checkpoint to {@code block}. It never moves backward. */
   void saveCheckpoint(long block);
 }

@@ -167,6 +167,16 @@ public class JdbcChainEventRepository implements ChainEventRepository {
     return key(txHash, logIndex) + ":" + blockHash;
   }
 
+  /** Runs pg_try_advisory_xact_lock on the connection of the running batch transaction. */
+  @Override
+  public boolean tryAdvisoryLock(long key) {
+    return Boolean.TRUE.equals(
+        jdbc.sql("select pg_try_advisory_xact_lock(:key)")
+            .param("key", key)
+            .query(Boolean.class)
+            .single());
+  }
+
   @Override
   public OptionalLong checkpoint() {
     return jdbc.sql("select last_block from indexer_checkpoint where id = 1")
@@ -183,7 +193,7 @@ public class JdbcChainEventRepository implements ChainEventRepository {
             insert into indexer_checkpoint (id, last_block, updated_at)
             values (1, :block, :now)
             on conflict (id) do update set
-              last_block = excluded.last_block,
+              last_block = greatest(indexer_checkpoint.last_block, excluded.last_block),
               updated_at = excluded.updated_at
             """)
         .param("block", block)

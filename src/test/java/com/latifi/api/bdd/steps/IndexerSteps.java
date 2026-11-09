@@ -4,9 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.latifi.api.config.ChainProperties;
+import com.latifi.api.config.IndexerProperties;
 import com.latifi.api.ledger.application.IndexerService;
+import com.latifi.api.ledger.domain.ChainEventListener;
+import com.latifi.api.ledger.domain.ChainEventRepository;
+import com.latifi.api.ledger.domain.ChainRpcException;
 import com.latifi.api.ledger.domain.CycleResult;
 import com.latifi.api.ledger.infrastructure.LoanBookEvents;
+import com.latifi.api.ledger.infrastructure.Web3jLogSource;
 import com.latifi.api.support.ChainFixtures;
 import com.latifi.api.support.FakeChainNode;
 import com.latifi.api.support.TestBeansConfig.RecordingListener;
@@ -22,6 +28,8 @@ import java.util.TreeSet;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.web3j.protocol.Web3j;
 
 public class IndexerSteps {
 
@@ -37,6 +45,8 @@ public class IndexerSteps {
   private String lastTxHash;
   private ChainFixtures.Log lastLog;
   private Long storedRowId;
+  private ChainRpcException lastFailure;
+  private int rejectedBefore;
   private int emitted;
 
   public IndexerSteps(
@@ -97,6 +107,71 @@ public class IndexerSteps {
     node.emit(block, log);
   }
 
+  /**
+   * A service of its own with its own log source. The log source remembers the range size that a
+   * provider accepted, so the scenarios that limit the range must not share one with the others.
+   * The new service also has not checked the chain id yet.
+   */
+  @Given("an indexer with the batch size {int}")
+  public void indexerWithBatchSize(int batchSize) {
+    IndexerProperties base = context.getBean(IndexerProperties.class);
+    ChainProperties chain = context.getBean(ChainProperties.class);
+    IndexerProperties properties =
+        new IndexerProperties(
+            base.enabled(), base.pollInterval(), batchSize, base.reorgWindow(), base.startBlock());
+    indexer =
+        new IndexerService(
+            new Web3jLogSource(context.getBean(Web3j.class), chain.loanBookAddress()),
+            context.getBean(ChainEventRepository.class),
+            context.getBean(LoanBookEvents.class),
+            List.copyOf(context.getBeansOfType(ChainEventListener.class).values()),
+            properties,
+            chain,
+            context.getBean(TransactionTemplate.class));
+  }
+
+  @Given("the node accepts at most {int} blocks per log request")
+  public void nodeAcceptsAtMost(int blocks) {
+    node.maxLogRange(blocks);
+  }
+
+  @Given("the node is down")
+  public void nodeIsDown() {
+    node.down(true);
+  }
+
+  @Given("the node is back up")
+  public void nodeIsBackUp() {
+    node.down(false);
+  }
+
+  @Given("the node goes down after {int} requests")
+  public void nodeGoesDownAfter(int requests) {
+    node.failAfterRequests(requests);
+  }
+
+  @Given("the node reports the chain id {int}")
+  public void nodeReportsChainId(int id) {
+    node.chainId(id);
+  }
+
+  @Given("the node head falls back to block {int}")
+  public void nodeHeadFallsBack(int block) {
+    node.truncateTo(block);
+  }
+
+  @Given("the stored checkpoint is block {int}")
+  public void storedCheckpoint(int block) {
+    jdbc.update(
+        "insert into indexer_checkpoint (id, last_block, updated_at) values (1, ?, now())",
+        (long) block);
+  }
+
+  @Given("the number of ranges the node rejected so far is noted")
+  public void noteRejected() {
+    rejectedBefore = node.rejectedRangeCount();
+  }
+
   @Given("the node reorgs from block {int}")
   public void nodeReorgs(int block) {
     node.reorg(block);
@@ -121,6 +196,15 @@ public class IndexerSteps {
   @When("the indexer runs once")
   public void indexerRunsOnce() {
     lastResult = indexer.runOnce();
+  }
+
+  @When("the indexer runs once and the node fails")
+  public void indexerRunsAndFails() {
+    try {
+      lastResult = indexer.runOnce();
+    } catch (ChainRpcException e) {
+      lastFailure = e;
+    }
   }
 
   @When("the indexer restarts as a new service instance")
@@ -163,6 +247,42 @@ public class IndexerSteps {
                 "interestRateBps", "1200",
                 "termDays", "90",
                 "installments", "3"));
+  }
+
+  @Then("the run failed with a node error")
+  public void runFailed() {
+    assertThat(lastFailure).isNotNull();
+  }
+
+  @Then("the cycle was skipped with the reason {string}")
+  public void cycleSkipped(String reason) {
+    assertThat(lastResult.skippedReason()).isEqualTo(reason);
+  }
+
+  @Then("the cycle ran to the head")
+  public void cycleRanToTheHead() {
+    assertThat(lastResult.skipped()).isFalse();
+  }
+
+  @Then("the cycle inserted {int} events")
+  public void cycleInserted(int expected) {
+    assertThat(lastResult.eventsInserted()).isEqualTo(expected);
+  }
+
+  @Then("there is no checkpoint row")
+  public void noCheckpointRow() {
+    assertThat(jdbc.queryForObject("select count(*) from indexer_checkpoint", Integer.class))
+        .isZero();
+  }
+
+  @Then("the node rejected {int} ranges or fewer")
+  public void rejectedAtMost(int max) {
+    assertThat(node.rejectedRangeCount() - rejectedBefore).isLessThanOrEqualTo(max);
+  }
+
+  @Then("the node rejected no further range")
+  public void rejectedNoFurther() {
+    assertThat(node.rejectedRangeCount()).isEqualTo(rejectedBefore);
   }
 
   @Then("the cycle removed {int} event(s)")

@@ -153,3 +153,112 @@ Feature: Event indexer
     When the indexer runs once
     Then chain_event has exactly 1 row
     And the cycle removed 0 events
+
+  @api-03
+  Scenario: A range the provider rejects is split until it is accepted
+    Given an indexer with the batch size 100
+    And the node has 95 blocks
+    And the node accepts at most 10 blocks per log request
+    And a LoanRequested log for loan 1 is emitted at block 7
+    And a LoanRequested log for loan 2 is emitted at block 48
+    And a LoanRequested log for loan 3 is emitted at block 90
+    When the indexer runs once
+    Then chain_event holds the loans "1,2,3"
+    And the checkpoint is block 95
+    And the node rejected 4 ranges or fewer
+    Given the number of ranges the node rejected so far is noted
+    And the node mines to block 100
+    When the indexer runs once
+    Then the node rejected no further range
+    And chain_event has exactly 3 rows
+    And the checkpoint is block 100
+
+  @api-03
+  Scenario: A node on the wrong chain is refused
+    Given the node has 20 blocks
+    And a LoanRequested log for loan 1 is emitted at block 5
+    And the node reports the chain id 1
+    And the indexer restarts as a new service instance
+    When the indexer runs once
+    Then the cycle was skipped with the reason "chain-id-mismatch"
+    And chain_event has exactly 0 rows
+    And there is no checkpoint row
+    Given the node reports the chain id 80002
+    When the indexer runs once
+    Then the cycle ran to the head
+    And chain_event has exactly 1 row
+
+  @api-03
+  Scenario: A lagging node is skipped
+    Given the node has 50 blocks
+    And a LoanRequested log for loan 1 is emitted at block 43
+    And the stored checkpoint is block 40
+    And the node head falls back to block 30
+    When the indexer runs once
+    Then the cycle was skipped with the reason "node-behind"
+    And chain_event has exactly 0 rows
+    And the checkpoint is block 40
+    Given the node mines to block 45
+    When the indexer runs once
+    Then the cycle ran to the head
+    And chain_event has exactly 1 row
+    And the checkpoint is block 45
+
+  @api-03
+  Scenario: After an outage the indexer catches up in one cycle
+    Given the node has 10 blocks
+    And a LoanRequested log for loan 1 is emitted at block 4
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    Given the node is down
+    And a LoanRequested log for loan 2 is emitted at block 15
+    And a LoanFunded log for loan 2 is emitted at block 22
+    And a LoanRepaid log for loan 2 is emitted at block 33
+    And the node mines to block 40
+    When the indexer runs once and the node fails
+    Then the run failed with a node error
+    And chain_event has exactly 1 row
+    And the checkpoint is block 10
+    Given the node is back up
+    When the indexer runs once
+    Then chain_event has exactly 4 rows
+    And the checkpoint is block 40
+
+  # The node counts every call: the chain id, the block number, then one log request and one block
+  # request per batch that carries a log. Six requests are the first two batches, so the third dies.
+  @api-03
+  Scenario: A cycle that dies in the middle keeps the batches it committed
+    Given an indexer with the batch size 10
+    And the node has 50 blocks
+    And a LoanRequested log for loan 1 is emitted at block 5
+    And a LoanRequested log for loan 2 is emitted at block 15
+    And a LoanRequested log for loan 3 is emitted at block 25
+    And the node goes down after 6 requests
+    When the indexer runs once and the node fails
+    Then the run failed with a node error
+    And chain_event has exactly 2 rows
+    And chain_event holds the loans "1,2"
+    And the checkpoint is block 20
+    Given the node is back up
+    When the indexer runs once
+    Then chain_event has exactly 3 rows
+    And chain_event holds the loans "1,2,3"
+    And no chain_event key appears twice
+    And the checkpoint is block 50
+
+  @api-03
+  Scenario: A long stop does not lose events
+    Given the node has 10 blocks
+    When the indexer runs once
+    Then the checkpoint is block 10
+    Given a LoanRequested log for loan 1 is emitted at block 20
+    And a LoanRequested log for loan 2 is emitted at block 70
+    And a LoanRequested log for loan 3 is emitted at block 120
+    And a LoanRequested log for loan 4 is emitted at block 180
+    And a LoanRequested log for loan 5 is emitted at block 240
+    And a LoanRequested log for loan 6 is emitted at block 300
+    And the node mines to block 310
+    When the indexer runs once
+    Then the cycle inserted 6 events
+    And chain_event holds the loans "1,2,3,4,5,6"
+    And the checkpoint is block 310
