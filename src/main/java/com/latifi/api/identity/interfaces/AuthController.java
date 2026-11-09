@@ -4,6 +4,8 @@ import com.latifi.api.identity.application.ChallengeService;
 import com.latifi.api.identity.application.VerifyService;
 import com.latifi.api.identity.application.VerifyService.Verified;
 import com.latifi.api.identity.domain.Challenge;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Wallet sign-in. The {@code /api/v1} prefix comes from WebConfig. */
 @RestController
+@Tag(name = "Auth")
 @RequestMapping("/auth")
 public class AuthController {
 
@@ -28,12 +31,14 @@ public class AuthController {
   }
 
   @PostMapping("/challenge")
-  public ChallengeResponse challenge(@Valid @RequestBody ChallengeRequest request) {
+  @Operation(summary = "Request a sign-in challenge for a wallet address")
+  public ChallengeResponse issueChallenge(@Valid @RequestBody ChallengeRequest request) {
     return ChallengeResponse.from(challenges.issue(request.address()));
   }
 
   @PostMapping("/verify")
-  public TokenResponse verify(@Valid @RequestBody VerifyRequest request) {
+  @Operation(summary = "Exchange a signed challenge for a session token")
+  public TokenResponse verifyChallenge(@Valid @RequestBody VerifyRequest request) {
     Verified verified =
         verification.verify(request.challengeId(), request.address(), request.signature());
     return new TokenResponse(

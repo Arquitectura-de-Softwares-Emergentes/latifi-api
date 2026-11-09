@@ -5,6 +5,8 @@ import com.latifi.api.ledger.application.LoanQueryService;
 import com.latifi.api.ledger.domain.LoanPageResult;
 import com.latifi.api.ledger.domain.LoanState;
 import com.latifi.api.ledger.domain.LoanView;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
  * answers 400 VALIDATION_FAILED from one place.
  */
 @RestController
+@Tag(name = "Loans")
 @RequestMapping("/loans")
 public class LoanController {
 
@@ -33,7 +36,8 @@ public class LoanController {
    * validation of the service, or the type mismatch handler, and never a framework default.
    */
   @GetMapping
-  public LoanPageDto list(
+  @Operation(summary = "List loans with filters and a sort order")
+  public LoanPageDto listLoans(
       @RequestParam(required = false) String status,
       @RequestParam(required = false) String minAmount,
       @RequestParam(required = false) String maxAmount,
@@ -59,7 +63,8 @@ public class LoanController {
   }
 
   @GetMapping("/{loanId}")
-  public LoanSummaryDto get(@PathVariable String loanId) {
+  @Operation(summary = "Read one loan with its status and borrower reputation")
+  public LoanSummaryDto getLoan(@PathVariable String loanId) {
     return LoanSummaryDto.from(loans.get(loanId));
   }
 

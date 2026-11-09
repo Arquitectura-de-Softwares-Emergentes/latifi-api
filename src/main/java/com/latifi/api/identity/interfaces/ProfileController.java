@@ -7,6 +7,8 @@ import com.latifi.api.identity.application.ProfileService.SaveResult;
 import com.latifi.api.identity.application.ProfileService.UpsertCommand;
 import com.latifi.api.identity.domain.ContactType;
 import com.latifi.api.identity.domain.Profile;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Profile endpoints. The {@code /api/v1} prefix comes from WebConfig. */
 @RestController
+@Tag(name = "Profiles")
 @RequestMapping("/profiles")
 public class ProfileController {
 
@@ -34,12 +37,14 @@ public class ProfileController {
   }
 
   @GetMapping("/{address}")
-  public ProfileResponse get(@PathVariable String address, Authentication authentication) {
+  @Operation(summary = "Read the profile bound to an address")
+  public ProfileResponse getProfile(@PathVariable String address, Authentication authentication) {
     return ProfileResponse.from(profiles.get(address, caller(authentication)));
   }
 
   @PutMapping("/{address}")
-  public ResponseEntity<ProfileResponse> put(
+  @Operation(summary = "Create or update the profile of the caller")
+  public ResponseEntity<ProfileResponse> upsertProfile(
       @PathVariable String address,
       @Valid @RequestBody ProfileUpdateRequest request,
       Authentication authentication) {

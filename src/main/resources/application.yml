@@ -57,6 +57,15 @@ latifi:
     read-timeout: PT3S
     retry-backoff: PT1M
 
+springdoc:
+  # The documentation is public by design. Phase 7 can switch both off through one variable.
+  api-docs:
+    path: /v3/api-docs
+    enabled: ${LATIFI_SWAGGER_ENABLED:true}
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${LATIFI_SWAGGER_ENABLED:true}
+
 management:
   endpoints:
     web:

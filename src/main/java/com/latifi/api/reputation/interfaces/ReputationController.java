@@ -5,6 +5,8 @@ import com.latifi.api.reputation.application.ReputationService;
 import com.latifi.api.reputation.domain.HistoryPage;
 import com.latifi.api.reputation.domain.ReputationState;
 import com.latifi.api.reputation.domain.SignalType;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * valid token. An unknown {@code type} value fails the enum conversion and answers 400.
  */
 @RestController
+@Tag(name = "Reputation")
 @RequestMapping("/reputation")
 public class ReputationController {
 
@@ -28,12 +31,14 @@ public class ReputationController {
   }
 
   @GetMapping("/{address}")
-  public ReputationResponse get(@PathVariable String address) {
+  @Operation(summary = "Read the reputation of an address")
+  public ReputationResponse getReputation(@PathVariable String address) {
     return ReputationResponse.from(reputation.get(address));
   }
 
   @GetMapping("/{address}/history")
-  public ReputationHistoryPage history(
+  @Operation(summary = "List the reputation events behind a score")
+  public ReputationHistoryPage getReputationHistory(
       @PathVariable String address,
       @RequestParam(required = false) SignalType type,
       @RequestParam(defaultValue = "0") int page,
