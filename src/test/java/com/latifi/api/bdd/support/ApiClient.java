@@ -56,19 +56,38 @@ public class ApiClient {
     send("PUT", path, json);
   }
 
+  /** Sends a body with a content type of the caller's choice, for the error scenarios. */
+  public void send(String method, String path, String body, String contentType) {
+    send(method, path, body, contentType, true);
+  }
+
+  /** Sends a request with no body, whatever the method. */
+  public void sendEmpty(String method, String path) {
+    send(method, path, null, null, false);
+  }
+
   private void send(String method, String path, String json) {
+    send(method, path, json, "application/json", json != null);
+  }
+
+  private void send(String method, String path, String json, String contentType, boolean hasBody) {
     HttpRequest.Builder request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + path));
-    headers.forEach(request::header);
+    headers.forEach(
+        (name, value) -> {
+          if (!value.isBlank()) {
+            request.header(name, value);
+          }
+        });
     if (bearerToken != null) {
       request.header("Authorization", "Bearer " + bearerToken);
     }
-    if (json != null) {
-      request.header("Content-Type", "application/json");
+    if (hasBody && contentType != null) {
+      request.header("Content-Type", contentType);
     }
     request.method(
         method,
-        json == null
+        json == null || !hasBody
             ? HttpRequest.BodyPublishers.noBody()
             : HttpRequest.BodyPublishers.ofString(json));
     try {
