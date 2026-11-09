@@ -4,9 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.latifi.api.config.ChainProperties;
+import com.latifi.api.config.IndexerProperties;
 import com.latifi.api.ledger.application.IndexerService;
+import com.latifi.api.ledger.domain.ChainEventListener;
+import com.latifi.api.ledger.domain.ChainEventRepository;
+import com.latifi.api.ledger.domain.ChainRpcException;
 import com.latifi.api.ledger.domain.CycleResult;
 import com.latifi.api.ledger.infrastructure.LoanBookEvents;
+import com.latifi.api.ledger.infrastructure.Web3jLogSource;
 import com.latifi.api.support.ChainFixtures;
 import com.latifi.api.support.FakeChainNode;
 import com.latifi.api.support.TestBeansConfig.RecordingListener;
@@ -22,6 +28,8 @@ import java.util.TreeSet;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.web3j.protocol.Web3j;
 
 public class IndexerSteps {
 
@@ -35,6 +43,10 @@ public class IndexerSteps {
   private IndexerService indexer;
   private CycleResult lastResult;
   private String lastTxHash;
+  private ChainFixtures.Log lastLog;
+  private Long storedRowId;
+  private ChainRpcException lastFailure;
+  private int rejectedBefore;
   private int emitted;
 
   public IndexerSteps(
@@ -91,7 +103,89 @@ public class IndexerSteps {
                   txHash, emitted, loanId, ChainFixtures.BORROWER, BigInteger.valueOf(3_000_000));
           default -> throw new IllegalArgumentException("unknown event " + eventName);
         };
+    lastLog = log;
     node.emit(block, log);
+  }
+
+  /**
+   * A service of its own with its own log source. The log source remembers the range size that a
+   * provider accepted, so the scenarios that limit the range must not share one with the others.
+   * The new service also has not checked the chain id yet.
+   */
+  @Given("an indexer with the batch size {int}")
+  public void indexerWithBatchSize(int batchSize) {
+    IndexerProperties base = context.getBean(IndexerProperties.class);
+    ChainProperties chain = context.getBean(ChainProperties.class);
+    IndexerProperties properties =
+        new IndexerProperties(
+            base.enabled(), base.pollInterval(), batchSize, base.reorgWindow(), base.startBlock());
+    indexer =
+        new IndexerService(
+            new Web3jLogSource(context.getBean(Web3j.class), chain.loanBookAddress()),
+            context.getBean(ChainEventRepository.class),
+            context.getBean(LoanBookEvents.class),
+            List.copyOf(context.getBeansOfType(ChainEventListener.class).values()),
+            properties,
+            chain,
+            context.getBean(TransactionTemplate.class));
+  }
+
+  @Given("the node accepts at most {int} blocks per log request")
+  public void nodeAcceptsAtMost(int blocks) {
+    node.maxLogRange(blocks);
+  }
+
+  @Given("the node is down")
+  public void nodeIsDown() {
+    node.down(true);
+  }
+
+  @Given("the node is back up")
+  public void nodeIsBackUp() {
+    node.down(false);
+  }
+
+  @Given("the node goes down after {int} requests")
+  public void nodeGoesDownAfter(int requests) {
+    node.failAfterRequests(requests);
+  }
+
+  @Given("the node reports the chain id {int}")
+  public void nodeReportsChainId(int id) {
+    node.chainId(id);
+  }
+
+  @Given("the node head falls back to block {int}")
+  public void nodeHeadFallsBack(int block) {
+    node.truncateTo(block);
+  }
+
+  @Given("the stored checkpoint is block {int}")
+  public void storedCheckpoint(int block) {
+    jdbc.update(
+        "insert into indexer_checkpoint (id, last_block, updated_at) values (1, ?, now())",
+        (long) block);
+  }
+
+  @Given("the number of ranges the node rejected so far is noted")
+  public void noteRejected() {
+    rejectedBefore = node.rejectedRangeCount();
+  }
+
+  @Given("the node reorgs from block {int}")
+  public void nodeReorgs(int block) {
+    node.reorg(block);
+  }
+
+  @Given("the node mines to block {int}")
+  public void nodeMinesTo(int block) {
+    node.mineTo(block);
+  }
+
+  @Given("the last emitted log is emitted again at block {int} with the block timestamp {long}")
+  public void lastLogEmittedAgain(int block, long epochSeconds) {
+    node.timestamp(block, epochSeconds);
+    node.emit(block, lastLog);
   }
 
   @Given("the node repeats every log in one answer")
@@ -102,6 +196,15 @@ public class IndexerSteps {
   @When("the indexer runs once")
   public void indexerRunsOnce() {
     lastResult = indexer.runOnce();
+  }
+
+  @When("the indexer runs once and the node fails")
+  public void indexerRunsAndFails() {
+    try {
+      lastResult = indexer.runOnce();
+    } catch (ChainRpcException e) {
+      lastFailure = e;
+    }
   }
 
   @When("the indexer restarts as a new service instance")
@@ -144,6 +247,86 @@ public class IndexerSteps {
                 "interestRateBps", "1200",
                 "termDays", "90",
                 "installments", "3"));
+  }
+
+  @Then("the run failed with a node error")
+  public void runFailed() {
+    assertThat(lastFailure).isNotNull();
+  }
+
+  @Then("the cycle was skipped with the reason {string}")
+  public void cycleSkipped(String reason) {
+    assertThat(lastResult.skippedReason()).isEqualTo(reason);
+  }
+
+  @Then("the cycle ran to the head")
+  public void cycleRanToTheHead() {
+    assertThat(lastResult.skipped()).isFalse();
+  }
+
+  @Then("the cycle inserted {int} events")
+  public void cycleInserted(int expected) {
+    assertThat(lastResult.eventsInserted()).isEqualTo(expected);
+  }
+
+  @Then("there is no checkpoint row")
+  public void noCheckpointRow() {
+    assertThat(jdbc.queryForObject("select count(*) from indexer_checkpoint", Integer.class))
+        .isZero();
+  }
+
+  @Then("the node rejected {int} ranges or fewer")
+  public void rejectedAtMost(int max) {
+    assertThat(node.rejectedRangeCount() - rejectedBefore).isLessThanOrEqualTo(max);
+  }
+
+  @Then("the node rejected no further range")
+  public void rejectedNoFurther() {
+    assertThat(node.rejectedRangeCount()).isEqualTo(rejectedBefore);
+  }
+
+  @Then("the cycle removed {int} event(s)")
+  public void cycleRemoved(int expected) {
+    assertThat(lastResult.eventsRemoved()).isEqualTo(expected);
+  }
+
+  @Then("the last listener batch touched the loans {string}")
+  public void lastBatchTouched(String loans) {
+    TreeSet<Long> expected = new TreeSet<>();
+    Arrays.stream(loans.split(",")).map(Long::parseLong).forEach(expected::add);
+    TreeSet<Long> actual = new TreeSet<>();
+    listener
+        .deltas()
+        .get(listener.deltas().size() - 1)
+        .touchedLoanIds()
+        .forEach(id -> actual.add(id.longValueExact()));
+    assertThat(actual).isEqualTo(expected);
+  }
+
+  @Then(
+      "the stored row of the last emitted transaction sits at block {int} with the node hash and timestamp of that block")
+  public void rowOfLastTransaction(int block) {
+    Map<String, Object> row =
+        jdbc.queryForMap("select * from chain_event where tx_hash = ?", lastLog.txHash());
+    assertThat(row.get("block_number")).isEqualTo((long) block);
+    assertThat(((String) row.get("block_hash")).trim()).isEqualTo(node.hashOf(block));
+    assertThat(((Timestamp) row.get("block_timestamp")).toInstant().getEpochSecond())
+        .isEqualTo(node.timestampOf(block));
+  }
+
+  @Given("the id of the chain_event row at block {int} is remembered")
+  public void rememberRowId(int block) {
+    storedRowId =
+        jdbc.queryForObject(
+            "select id from chain_event where block_number = ?", Long.class, (long) block);
+  }
+
+  @Then("the chain_event row at block {int} is the remembered one")
+  public void rowIsTheRemembered(int block) {
+    assertThat(
+            jdbc.queryForObject(
+                "select id from chain_event where block_number = ?", Long.class, (long) block))
+        .isEqualTo(storedRowId);
   }
 
   @Then("the checkpoint is block {int}")

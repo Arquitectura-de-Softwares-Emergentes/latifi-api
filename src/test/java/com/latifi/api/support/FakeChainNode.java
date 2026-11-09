@@ -44,9 +44,13 @@ public class FakeChainNode {
   private final HttpServer server;
   private final AtomicLong head = new AtomicLong(0);
   private final AtomicLong chainId = new AtomicLong(80002);
-  private final AtomicInteger fork = new AtomicInteger(0);
+  private final List<Long> forkStarts = new CopyOnWriteArrayList<>();
   private final AtomicBoolean down = new AtomicBoolean(false);
   private final AtomicBoolean repeatLogs = new AtomicBoolean(false);
+  private final AtomicInteger maxLogRange = new AtomicInteger(Integer.MAX_VALUE);
+  private final AtomicInteger rejectedRanges = new AtomicInteger(0);
+  private final AtomicInteger failAfter = new AtomicInteger(-1);
+  private final AtomicInteger served = new AtomicInteger(0);
   private final Map<Long, List<ChainFixtures.Log>> logsByBlock = new ConcurrentHashMap<>();
   private final Map<Long, Long> timestamps = new ConcurrentHashMap<>();
   private final List<Request> requests = new CopyOnWriteArrayList<>();
@@ -103,9 +107,42 @@ public class FakeChainNode {
     chainId.set(id);
   }
 
-  /** While true, every call answers HTTP 503. */
+  /** While true, every call answers HTTP 503. Setting it to false also disarms the countdown. */
   public void down(boolean value) {
     down.set(value);
+    if (!value) {
+      failAfter.set(-1);
+    }
+  }
+
+  /**
+   * The node answers {@code requests} more calls, then goes down like {@link #down(boolean)} with
+   * true, so a test can stop it in the middle of a cycle. Every call counts, including {@code
+   * eth_chainId} and {@code eth_blockNumber}.
+   */
+  public void failAfterRequests(int requests) {
+    served.set(0);
+    failAfter.set(requests);
+  }
+
+  /**
+   * {@code eth_getLogs} for a range wider than {@code blocks} answers HTTP 200 with a JSON-RPC
+   * error, the way a provider with a block range cap does.
+   */
+  public void maxLogRange(int blocks) {
+    maxLogRange.set(blocks);
+  }
+
+  /** How many {@code eth_getLogs} ranges the node refused for being too wide. */
+  public int rejectedRangeCount() {
+    return rejectedRanges.get();
+  }
+
+  /**
+   * The head falls to {@code block}, like a node that is behind or was restored from a snapshot.
+   */
+  public void truncateTo(long block) {
+    head.set(block);
   }
 
   /** While true, {@code eth_getLogs} returns every log twice in one answer. */
@@ -115,16 +152,30 @@ public class FakeChainNode {
 
   /** Changes every block hash from now on, like a reorg that replaced all blocks. */
   public void forkHashes() {
-    fork.incrementAndGet();
+    forkStarts.add(0L);
+  }
+
+  /**
+   * A reorg from {@code fromBlock}: the logs of that block and every later block are gone, and the
+   * hashes of those blocks change. The head stays where it is. A test then emits the logs of the
+   * new branch and mines further.
+   */
+  public void reorg(long fromBlock) {
+    logsByBlock.keySet().removeIf(number -> number >= fromBlock);
+    forkStarts.add(fromBlock);
   }
 
   /** Removes every log and request and rewinds the chain. Tests call it between scenarios. */
   public void reset() {
     head.set(0);
     chainId.set(80002);
-    fork.set(0);
+    forkStarts.clear();
     down.set(false);
     repeatLogs.set(false);
+    maxLogRange.set(Integer.MAX_VALUE);
+    rejectedRanges.set(0);
+    failAfter.set(-1);
+    served.set(0);
     logsByBlock.clear();
     timestamps.clear();
     requests.clear();
@@ -145,6 +196,9 @@ public class FakeChainNode {
   private void handle(HttpExchange exchange) throws IOException {
     try (exchange) {
       byte[] body = exchange.getRequestBody().readAllBytes();
+      if (failAfter.get() >= 0 && served.getAndIncrement() >= failAfter.get()) {
+        down.set(true);
+      }
       if (down.get()) {
         requests.add(new Request("down", -1, -1, ""));
         exchange.sendResponseHeaders(503, -1);
@@ -165,7 +219,19 @@ public class FakeChainNode {
           requests.add(new Request(method, -1, -1, ""));
           response.put("result", hex(head.get()));
         }
-        case "eth_getLogs" -> response.set("result", getLogs(params.path(0)));
+        case "eth_getLogs" -> {
+          long from = Long.decode(params.path(0).path("fromBlock").asText());
+          long to = Long.decode(params.path(0).path("toBlock").asText());
+          if (to - from + 1 > maxLogRange.get()) {
+            requests.add(new Request(method, from, to, params.path(0).path("topics").toString()));
+            rejectedRanges.incrementAndGet();
+            ObjectNode error = response.putObject("error");
+            error.put("code", -32602);
+            error.put("message", "query exceeds max block range " + maxLogRange.get());
+          } else {
+            response.set("result", getLogs(params.path(0)));
+          }
+        }
         case "eth_getBlockByNumber" -> {
           long number = Long.decode(params.path(0).asText());
           requests.add(new Request(method, number, number, ""));
@@ -253,9 +319,10 @@ public class FakeChainNode {
 
   private String blockHash(long number) {
     try {
+      long forks = forkStarts.stream().filter(start -> start <= number).count();
       byte[] digest =
           MessageDigest.getInstance("SHA-256")
-              .digest(("block:" + number + ":" + fork.get()).getBytes(StandardCharsets.UTF_8));
+              .digest(("block:" + number + ":" + forks).getBytes(StandardCharsets.UTF_8));
       StringBuilder out = new StringBuilder("0x");
       for (byte b : digest) {
         out.append(String.format("%02x", b));

@@ -2,14 +2,18 @@ package com.latifi.api.ledger.infrastructure;
 
 import com.latifi.api.ledger.domain.BlockInfo;
 import com.latifi.api.ledger.domain.ChainLogSource;
+import com.latifi.api.ledger.domain.ChainRpcErrorException;
 import com.latifi.api.ledger.domain.ChainRpcException;
 import com.latifi.api.ledger.domain.RawLog;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameter;
 import org.web3j.protocol.core.Response;
@@ -26,6 +30,12 @@ public class Web3jLogSource implements ChainLogSource {
 
   private final Web3j web3j;
   private final String loanBookAddress;
+
+  /**
+   * The largest range that a provider is known to accept, learned after a rejection. It starts
+   * unbounded and resets when the process restarts.
+   */
+  private final AtomicInteger acceptedSize = new AtomicInteger(Integer.MAX_VALUE);
 
   public Web3jLogSource(Web3j web3j, String loanBookAddress) {
     this.web3j = web3j;
@@ -45,7 +55,62 @@ public class Web3jLogSource implements ChainLogSource {
   }
 
   @Override
+  public int suggestedBatchSize(int configured) {
+    return Math.min(configured, acceptedSize.get());
+  }
+
+  /**
+   * Asks for the whole range. When the node answers with a JSON-RPC error and the range spans more
+   * than one block, the range is halved and both halves are asked again. The first range that the
+   * node then accepts becomes the size for the rest of the call and for later calls, so a provider
+   * limit costs a handful of rejected calls once and none afterwards. One block that the node still
+   * rejects ends the call with the exception. A transport failure is never retried here, because
+   * halving cannot cure a node that is down.
+   */
+  @Override
   public List<RawLog> logs(long fromBlock, long toBlock) {
+    List<RawLog> result = new ArrayList<>();
+    Deque<long[]> pending = new ArrayDeque<>();
+    pending.push(new long[] {fromBlock, toBlock});
+    boolean learning = false;
+    while (!pending.isEmpty()) {
+      long[] range = pending.pop();
+      long size = range[1] - range[0] + 1;
+      long known = acceptedSize.get();
+      if (size > known) {
+        splitInto(pending, range, known);
+        continue;
+      }
+      try {
+        result.addAll(fetchLogs(range[0], range[1]));
+      } catch (ChainRpcErrorException e) {
+        if (size == 1) {
+          throw e;
+        }
+        learning = true;
+        splitInto(pending, range, (size + 1) / 2);
+        continue;
+      }
+      if (learning) {
+        acceptedSize.accumulateAndGet((int) size, Math::min);
+        learning = false;
+      }
+    }
+    return result;
+  }
+
+  /** Pushes the pieces so that the lowest block range is popped first. */
+  private static void splitInto(Deque<long[]> pending, long[] range, long pieceSize) {
+    List<long[]> pieces = new ArrayList<>();
+    for (long start = range[0]; start <= range[1]; start += pieceSize) {
+      pieces.add(new long[] {start, Math.min(start + pieceSize - 1, range[1])});
+    }
+    for (int i = pieces.size() - 1; i >= 0; i--) {
+      pending.push(pieces.get(i));
+    }
+  }
+
+  private List<RawLog> fetchLogs(long fromBlock, long toBlock) {
     EthFilter filter =
         new EthFilter(
                 DefaultBlockParameter.valueOf(BigInteger.valueOf(fromBlock)),
@@ -99,12 +164,13 @@ public class Web3jLogSource implements ChainLogSource {
       throw new ChainRpcException(method + " failed: " + e.getClass().getSimpleName());
     }
     if (response.hasError()) {
-      throw new ChainRpcException(
+      throw new ChainRpcErrorException(
           method
               + " returned error "
               + response.getError().getCode()
               + ": "
-              + safeMessage(response));
+              + safeMessage(response),
+          response.getError().getCode());
     }
     return response;
   }
