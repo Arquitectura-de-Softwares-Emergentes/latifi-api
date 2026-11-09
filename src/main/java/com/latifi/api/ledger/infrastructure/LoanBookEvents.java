@@ -191,6 +191,10 @@ public class LoanBookEvents {
 
   /** Decodes the non indexed fields and insists that all of them are present. */
   private static List<Type> data(RawLog log, Event event, int expected) {
+    // Every field of the v0 events is a static type, so the data is exactly one word per field.
+    if (log.data() == null || log.data().length() != 2 + 64 * expected) {
+      throw new IllegalArgumentException("data has the wrong length");
+    }
     List<Type> values = FunctionReturnDecoder.decode(log.data(), event.getNonIndexedParameters());
     if (values.size() != expected) {
       throw new IllegalArgumentException("truncated data");
