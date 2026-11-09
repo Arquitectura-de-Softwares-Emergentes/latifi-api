@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: LatiFi API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
     Draft contract of the Identity/Wallet, Reputation and Exchange Rate contexts of LatiFi API, as
     described in Chapter V of the project report. Phase 4 builds the Spring controllers from this
@@ -14,6 +14,19 @@ info:
     Paged responses share the envelope items, page, size and totalItems. Every error body is an
     ApiError. Local currency values exist only in the exchange rate operations and are display
     only.
+
+
+    Reputation. The score is an integer from 0 to 1000 and the levels use the same scale: NEW,
+    BUILDING, TRUSTED and EXCELLENT. The score is derived from the indexed event log, so it can be
+    recomputed at any time.
+
+
+    Session. The session token lives 900 seconds (15 minutes) and there is no refresh token. When
+    it expires, the wallet signs a new challenge.
+
+
+    Exchange rates. Rates come from a third party. The attribution text is "Rates By Exchange Rate
+    API" and the link is https://www.exchangerate-api.com.
 servers:
   - url: /api/v1
     description: Base path of every operation. Paths below are written without it.
@@ -101,9 +114,14 @@ paths:
       operationId: getProfile
       summary: Read the profile bound to an address
       description: >-
-        Returns the display name of the profile. The contact is included only when the address is
-        the one of the authenticated caller, and it is never returned for any other address. Serves
-        US-IDEN-02. Listed in report section 5.2.2.
+        Returns the display name of the profile. The read is public and the bearer token is
+        optional. A call with no token returns the display name only. A call with an invalid or
+        expired token still returns 401. The contact is included only when the token belongs to the
+        address in the path, and it is never returned for any other address. Serves US-IDEN-02.
+        Listed in report section 5.2.2.
+      security:
+        - {}
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/AddressPath'
         - $ref: '#/components/parameters/AcceptLanguage'
@@ -163,9 +181,10 @@ paths:
       operationId: getReputation
       summary: Read the reputation of an address
       description: >-
-        Returns the score (0 to 100), the level and the counters of a borrower. An address with a
-        profile but no loans yet gets the initial off-chain score. Serves US-REP-02 and US-API-01.
-        Listed in report section 5.3.2.
+        Returns the score (0 to 1000), the level and the counters of a borrower. An address with a
+        profile but no loans yet gets the initial off-chain score. The counters are counts of
+        completed installments and defaults taken from the indexed event log, not the counters of
+        the contract. Serves US-REP-02 and US-API-01. Listed in report section 5.3.2.
       parameters:
         - $ref: '#/components/parameters/AddressPath'
         - $ref: '#/components/parameters/AcceptLanguage'
@@ -228,7 +247,8 @@ paths:
         requests first. Every loan carries the reputation of its borrower. No field of a loan holds
         a local currency value, the app asks the exchange rate operations for that. Serves
         US-LEND-02, US-REP-03 and US-LEND-05. Listed in report section 5.3.2 and used by the
-        searching systems of report section 6.2.3.
+        searching systems of report section 6.2.3. An open request has no expiry on the chain, so
+        lenders filter with status=OPEN and sort with recent to see the newest first.
       parameters:
         - name: status
           in: query
@@ -259,7 +279,9 @@ paths:
         - name: minLevel
           in: query
           required: false
-          description: Lowest borrower reputation level to include.
+          description: >-
+            Lowest borrower reputation level to include. The levels cover the score scale of 0 to
+            1000: NEW from 0, BUILDING from 400, TRUSTED from 600 and EXCELLENT from 800.
           schema:
             $ref: '#/components/schemas/ReputationLevel'
         - name: borrower
@@ -331,11 +353,13 @@ paths:
       summary: Convert a stablecoin amount to a local currency
       description: >-
         Converts an amount in stablecoin base units to the requested currency using the cached
-        rate. The stablecoin is treated as one US dollar, and the value is for display only: it
-        never changes what is signed or stored on-chain. When the provider is down the last cached
-        rate is served with status 200 and stale set to true. An unsupported currency returns 400
-        with a message localized by Accept-Language. Serves US-API-02 and US-LEND-06. Listed in
-        report section 5.4.2.
+        rate. The supported currencies are PEN, COP, MXN, ARS, BRL and CLP. The stablecoin is
+        treated as one US dollar, and the value is for display only: it never changes what is
+        signed or stored on-chain. When the provider is down the last cached rate is served with
+        status 200 and stale set to true. An unsupported currency returns 400 with the code
+        UNSUPPORTED_CURRENCY and a message localized by Accept-Language. When no rate exists at all
+        (the provider is down and nothing was ever cached) the response is 503 with the code
+        RATE_UNAVAILABLE. Serves US-API-02 and US-LEND-06. Listed in report section 5.4.2.
       parameters:
         - name: amount
           in: query
@@ -365,6 +389,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /exchange-rate/rates:
     get:
       tags: [ExchangeRate]
@@ -372,7 +398,9 @@ paths:
       summary: List the available rates and their age
       description: >-
         Returns one quote per supported currency with the instant of the rate and the stale flag.
-        Serves US-API-02. Listed in report section 5.4.2.
+        When no rate exists at all the response is 503 with the code RATE_UNAVAILABLE. The
+        attribution text "Rates By Exchange Rate API" applies to these rates. Serves US-API-02.
+        Listed in report section 5.4.2.
       parameters:
         - $ref: '#/components/parameters/AcceptLanguage'
       responses:
@@ -384,6 +412,8 @@ paths:
                 $ref: '#/components/schemas/RateList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 components:
   securitySchemes:
     bearerAuth:
@@ -396,10 +426,12 @@ components:
       name: Accept-Language
       in: header
       required: false
-      description: Language of error messages. English is the default and es_419 is supported.
+      description: >-
+        Language of error messages. BCP 47 tags such as es-419 and es-PE are accepted, and so are
+        the underscore forms such as es_419 and en_US. Any Spanish range answers in es_419.
+        Anything else answers in en_US, which is the default.
       schema:
         type: string
-        enum: [en_US, es_419]
         default: en_US
     AddressPath:
       name: address
@@ -461,6 +493,19 @@ components:
             $ref: '#/components/schemas/ApiError'
     TooManyRequests:
       description: Too many requests from this client. The implementation must rate limit.
+      headers:
+        Retry-After:
+          description: Seconds to wait before the next attempt.
+          schema:
+            type: integer
+            minimum: 0
+            example: 30
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    ServiceUnavailable:
+      description: No exchange rate is available. The code is RATE_UNAVAILABLE.
       content:
         application/json:
           schema:
@@ -493,12 +538,31 @@ components:
           example: 400
         code:
           type: string
-          description: Stable machine readable error code.
+          description: >-
+            Stable machine readable error code. The full list is in the x-error-codes extension of
+            this schema.
           example: INVALID_ADDRESS
         message:
           type: string
           description: Human readable message, localized by Accept-Language.
           example: The address is not a valid wallet address.
+      x-error-codes:
+        - INVALID_ADDRESS
+        - VALIDATION_FAILED
+        - MALFORMED_REQUEST
+        - UNSUPPORTED_CURRENCY
+        - INVALID_CREDENTIALS
+        - UNAUTHORIZED
+        - FORBIDDEN_NOT_OWNER
+        - NOT_FOUND
+        - PROFILE_NOT_FOUND
+        - REPUTATION_NOT_FOUND
+        - LOAN_NOT_FOUND
+        - METHOD_NOT_ALLOWED
+        - UNSUPPORTED_MEDIA_TYPE
+        - TOO_MANY_REQUESTS
+        - INTERNAL_ERROR
+        - RATE_UNAVAILABLE
     ChallengeRequest:
       type: object
       required: [address]
@@ -515,12 +579,25 @@ components:
           example: 3f2b8c1e-5d4a-4c7b-9a10-2e6f7d8c9b01
         nonce:
           type: string
-          description: Random single-use value embedded in the message.
-          example: 9c1d4f7a2b8e4d3f
+          description: Random single-use value of 128 bits (32 hex characters) embedded in the message.
+          example: 9c1d4f7a2b8e4d3f5a6b7c8d9e0f1a2b
         message:
           type: string
-          description: Exact text the wallet signs as an EIP-191 personal message.
-          example: 'LatiFi sign-in. Nonce: 9c1d4f7a2b8e4d3f'
+          description: >-
+            EIP-4361 sign-in text. The wallet signs exactly this text as an EIP-191 personal
+            message, without any change. Lines are separated by LF only.
+          example: |-
+            latifi.example wants you to sign in with your Ethereum account:
+            0x52908400098527886E0F7030069857D2E4169EE7
+
+            Sign in to LatiFi. This request does not trigger a blockchain transaction or cost any fee.
+
+            URI: https://latifi.example
+            Version: 1
+            Chain ID: 80002
+            Nonce: 9c1d4f7a2b8e4d3f5a6b7c8d9e0f1a2b
+            Issued At: 2026-01-01T12:00:00Z
+            Expiration Time: 2026-01-01T12:05:00Z
         issuedAt:
           type: string
           format: date-time
@@ -557,8 +634,8 @@ components:
           enum: [Bearer]
         expiresIn:
           type: integer
-          description: Lifetime of the token in seconds.
-          example: 3600
+          description: Lifetime of the token in seconds. It is 15 minutes and there is no refresh token.
+          example: 900
         address:
           $ref: '#/components/schemas/Address'
     ContactType:
@@ -610,6 +687,9 @@ components:
           example: '2026-01-01T12:00:00Z'
     ReputationLevel:
       type: string
+      description: >-
+        Level on the score scale of 0 to 1000. NEW is 0 to 399, or any address without a scored
+        chain signal. BUILDING is 400 to 599. TRUSTED is 600 to 799. EXCELLENT is 800 to 1000.
       enum: [NEW, BUILDING, TRUSTED, EXCELLENT]
     ReputationResponse:
       type: object
@@ -628,21 +708,25 @@ components:
         score:
           type: integer
           minimum: 0
-          maximum: 100
-          example: 62
+          maximum: 1000
+          description: Reputation score from 0 to 1000.
+          example: 620
         level:
           $ref: '#/components/schemas/ReputationLevel'
         onTimeCount:
           type: integer
           minimum: 0
+          description: Completed installments paid on time, counted from the indexed event log.
           example: 3
         lateCount:
           type: integer
           minimum: 0
+          description: Completed installments paid late, counted from the indexed event log.
           example: 1
         defaultCount:
           type: integer
           minimum: 0
+          description: Defaults taken from the indexed event log.
           example: 0
         profileComplete:
           type: boolean
@@ -656,7 +740,7 @@ components:
       enum: [PROFILE_COMPLETED, REPAID_ON_TIME, REPAID_LATE, DEFAULTED]
     ReputationEvent:
       type: object
-      required: [id, type, delta, scoreAfter, txHash, logIndex, occurredAt]
+      required: [id, type, delta, scoreAfter, occurredAt]
       properties:
         id:
           type: integer
@@ -672,13 +756,14 @@ components:
           $ref: '#/components/schemas/ReputationEventType'
         delta:
           type: integer
-          description: Change applied to the score.
-          example: 10
+          description: Effective change of the score, after the clamp to the range 0 to 1000.
+          example: 20
         scoreAfter:
           type: integer
           minimum: 0
-          maximum: 100
-          example: 62
+          maximum: 1000
+          description: Score right after this event, on the scale of 0 to 1000.
+          example: 620
         daysLate:
           type: integer
           nullable: true
@@ -686,12 +771,17 @@ components:
           description: Days past the due date. Only set for REPAID_LATE and DEFAULTED.
         txHash:
           type: string
+          nullable: true
           pattern: '^0x[0-9a-fA-F]{64}$'
-          description: Transaction that emitted the source event. With logIndex it is the idempotency key.
+          description: >-
+            Transaction that emitted the source event. With logIndex it is the idempotency key.
+            Null for PROFILE_COMPLETED, which has no transaction.
           example: '0x2222222222222222222222222222222222222222222222222222222222222222'
         logIndex:
           type: integer
+          nullable: true
           minimum: 0
+          description: Position of the source log in its transaction. Null for PROFILE_COMPLETED, which has no transaction.
           example: 0
         occurredAt:
           type: string
@@ -725,8 +815,9 @@ components:
         score:
           type: integer
           minimum: 0
-          maximum: 100
-          example: 62
+          maximum: 1000
+          description: Reputation score of the borrower, from 0 to 1000.
+          example: 620
         level:
           $ref: '#/components/schemas/ReputationLevel'
     LoanSummary:
@@ -759,8 +850,9 @@ components:
           $ref: '#/components/schemas/Uint256'
         interestRateBps:
           type: integer
-          minimum: 0
-          description: Flat interest over the whole term, in basis points.
+          minimum: 1
+          maximum: 5000
+          description: Annual simple interest, in basis points (1 to 5000).
           example: 1000
         termDays:
           type: integer
@@ -782,6 +874,7 @@ components:
           type: integer
           minimum: 0
           maximum: 6
+          description: Number of fully paid installments.
           example: 1
         requestedAt:
           type: string
@@ -837,9 +930,15 @@ components:
           pattern: '^[A-Z]{3}$'
           example: PEN
         value:
-          $ref: '#/components/schemas/DecimalString'
+          allOf:
+            - $ref: '#/components/schemas/DecimalString'
+          description: >-
+            Converted value, rounded half-even to the fraction digits of the currency. CLP has
+            none.
         rate:
-          $ref: '#/components/schemas/DecimalString'
+          allOf:
+            - $ref: '#/components/schemas/DecimalString'
+          description: Units of local currency per one US dollar.
         asOf:
           type: string
           format: date-time
@@ -862,7 +961,9 @@ components:
           pattern: '^[A-Z]{3}$'
           example: PEN
         rate:
-          $ref: '#/components/schemas/DecimalString'
+          allOf:
+            - $ref: '#/components/schemas/DecimalString'
+          description: Units of local currency per one US dollar.
         asOf:
           type: string
           format: date-time
