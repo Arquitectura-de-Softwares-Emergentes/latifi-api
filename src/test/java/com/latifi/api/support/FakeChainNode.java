@@ -49,6 +49,9 @@ public class FakeChainNode {
   private final AtomicBoolean repeatLogs = new AtomicBoolean(false);
   private final AtomicInteger maxLogRange = new AtomicInteger(Integer.MAX_VALUE);
   private final AtomicInteger rejectedRanges = new AtomicInteger(0);
+  private final AtomicInteger logErrorsLeft = new AtomicInteger(0);
+  private volatile int logErrorCode;
+  private volatile String logErrorMessage = "";
   private final AtomicInteger failAfter = new AtomicInteger(-1);
   private final AtomicInteger served = new AtomicInteger(0);
   private final Map<Long, List<ChainFixtures.Log>> logsByBlock = new ConcurrentHashMap<>();
@@ -133,6 +136,17 @@ public class FakeChainNode {
     maxLogRange.set(blocks);
   }
 
+  /**
+   * The next {@code times} {@code eth_getLogs} calls answer HTTP 200 with a JSON-RPC error of this
+   * code and message, whatever the range is, the way a provider does that is rate limiting or
+   * lagging behind.
+   */
+  public void failLogs(int times, int code, String message) {
+    logErrorCode = code;
+    logErrorMessage = message;
+    logErrorsLeft.set(times);
+  }
+
   /** How many {@code eth_getLogs} ranges the node refused for being too wide. */
   public int rejectedRangeCount() {
     return rejectedRanges.get();
@@ -174,6 +188,7 @@ public class FakeChainNode {
     repeatLogs.set(false);
     maxLogRange.set(Integer.MAX_VALUE);
     rejectedRanges.set(0);
+    logErrorsLeft.set(0);
     failAfter.set(-1);
     served.set(0);
     logsByBlock.clear();
@@ -222,7 +237,12 @@ public class FakeChainNode {
         case "eth_getLogs" -> {
           long from = Long.decode(params.path(0).path("fromBlock").asText());
           long to = Long.decode(params.path(0).path("toBlock").asText());
-          if (to - from + 1 > maxLogRange.get()) {
+          if (logErrorsLeft.getAndUpdate(left -> Math.max(0, left - 1)) > 0) {
+            requests.add(new Request(method, from, to, params.path(0).path("topics").toString()));
+            ObjectNode error = response.putObject("error");
+            error.put("code", logErrorCode);
+            error.put("message", logErrorMessage);
+          } else if (to - from + 1 > maxLogRange.get()) {
             requests.add(new Request(method, from, to, params.path(0).path("topics").toString()));
             rejectedRanges.incrementAndGet();
             ObjectNode error = response.putObject("error");

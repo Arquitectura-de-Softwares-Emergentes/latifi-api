@@ -30,9 +30,10 @@ import org.springframework.stereotype.Service;
  *
  * <p>A cache younger than the TTL answers without a provider call. An older one refreshes under a
  * lock, so concurrent requests cause one call, and the call runs outside any database transaction.
- * When the refresh fails the last cached rates are served flagged stale, and the provider is not
- * called again before the retry backoff has passed. With no cached rate at all the answer is 503
- * RATE_UNAVAILABLE. This class is deliberately not transactional.
+ * When the refresh fails, for any reason including a database error, the last cached rates are
+ * served flagged stale, and the provider is not called again before the retry backoff has passed.
+ * With no cached rate at all the answer is 503 RATE_UNAVAILABLE. This class is deliberately not
+ * transactional.
  */
 @Service
 public class RateService {
@@ -165,6 +166,17 @@ public class RateService {
       LOG.warn(
           "The exchange rate refresh failed, serving the cache if there is one: {}",
           e.getMessage());
+      return fallback(previous);
+    } catch (RuntimeException e) {
+      // The provider answered or not, but storing or reading the rates failed, for example with a
+      // database error. It counts as a failed refresh: the backoff starts, so one database fault
+      // does not turn into a burst of provider calls, and the stale cache is served. Only the
+      // class name is logged, because a database message can quote the connection.
+      lastFailure = now;
+      LOG.warn(
+          "The exchange rate refresh failed after the provider call, serving the cache if there is"
+              + " one: {}",
+          e.getClass().getSimpleName());
       return fallback(previous);
     }
   }

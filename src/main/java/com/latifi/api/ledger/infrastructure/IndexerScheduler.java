@@ -1,6 +1,7 @@
 package com.latifi.api.ledger.infrastructure;
 
 import com.latifi.api.config.ConditionalOnChainRpc;
+import com.latifi.api.config.SchedulingConfig;
 import com.latifi.api.ledger.application.IndexerService;
 import com.latifi.api.ledger.domain.CycleResult;
 import org.slf4j.Logger;
@@ -10,8 +11,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Runs the indexer on a fixed delay. The delay counts from the end of one cycle, so two cycles
- * never overlap, and a cycle that fails never stops the schedule.
+ * Runs the indexer on a fixed delay, on a scheduler of its own. The delay counts from the end of
+ * one cycle, so two cycles never overlap, and a cycle that fails never stops the schedule. A cycle
+ * that takes minutes, as the first catch-up can, does not hold back the other scheduled jobs.
  */
 @Component
 @ConditionalOnChainRpc
@@ -26,7 +28,9 @@ public class IndexerScheduler {
     this.indexer = indexer;
   }
 
-  @Scheduled(fixedDelayString = "${latifi.indexer.poll-interval}")
+  @Scheduled(
+      scheduler = SchedulingConfig.INDEXER_SCHEDULER,
+      fixedDelayString = "${latifi.indexer.poll-interval}")
   public void tick() {
     try {
       CycleResult result = indexer.runOnce();
@@ -39,8 +43,8 @@ public class IndexerScheduler {
             result.lastBlock());
       }
     } catch (Exception e) {
-      // Only the class name goes to the log: a transport message can quote the node URL.
-      LOG.warn("Indexer cycle failed, the next one retries: {}", e.getClass().getSimpleName());
+      // The text is sanitized, so a message or cause that quotes the node URL cannot leak its key.
+      LOG.warn("Indexer cycle failed, the next one retries: {}", SafeErrorText.of(e));
     }
   }
 }

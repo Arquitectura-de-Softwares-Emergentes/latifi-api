@@ -8,15 +8,20 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Limits every request under {@code /api/v1/auth/} per client. SecurityConfig creates it and adds
- * it to the chain, and it is not a bean, so the container does not register it a second time.
+ * it to the chain, and it is not a bean, so the container does not register it a second time. The
+ * path is matched with the path pattern matcher of the authorization rules, which compares decoded
+ * segments, so {@code /api/v1/%61uth/challenge} cannot slip past a prefix test on the raw URI.
  */
 class AuthRateLimitFilter extends OncePerRequestFilter {
 
-  private static final String AUTH_PREFIX = WebConfig.API_PREFIX + "/auth/";
+  private static final RequestMatcher AUTH =
+      PathPatternRequestMatcher.withDefaults().matcher(WebConfig.API_PREFIX + "/auth/**");
 
   private final AuthRateLimiter limiter;
   private final ClientIpResolver clientIps;
@@ -30,7 +35,7 @@ class AuthRateLimitFilter extends OncePerRequestFilter {
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    return !request.getRequestURI().startsWith(AUTH_PREFIX);
+    return !AUTH.matches(request);
   }
 
   @Override
