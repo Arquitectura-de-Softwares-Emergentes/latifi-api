@@ -14,6 +14,18 @@ latifi:
     domain: ${LATIFI_AUTH_DOMAIN:localhost}
     uri: ${LATIFI_AUTH_URI:http://localhost:8080}
     challenge-ttl: PT5M
+    cleanup-interval: PT1H
+    cleanup-retention: PT24H
+  jwt:
+    secret: ${LATIFI_JWT_SECRET}
+    ttl: PT15M
+    issuer: latifi-api
+  ratelimit:
+    auth-per-ip-capacity: 30
+    auth-per-ip-period: PT1M
+    challenge-per-address-capacity: 5
+    challenge-per-address-period: PT1M
+    trust-forwarded-for: ${LATIFI_TRUST_FORWARDED_FOR:false}
   chain:
     id: 80002
 
