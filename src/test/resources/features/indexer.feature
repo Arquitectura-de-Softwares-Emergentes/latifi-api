@@ -88,3 +88,68 @@ Feature: Event indexer
     And batch 2 touched the loans "9"
     When the indexer runs once
     Then the listener received 2 batches
+
+  @api-03
+  Scenario: An event that leaves the chain is removed from the mirror
+    Given the node has 20 blocks
+    And a LoanRequested log for loan 7 is emitted at block 15
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    Given the node reorgs from block 14
+    And the node mines to block 25
+    When the indexer runs once
+    Then chain_event has exactly 0 rows
+    And the checkpoint is block 25
+    And the cycle removed 1 event
+    And the last listener batch touched the loans "7"
+
+  @api-03
+  Scenario: A transaction re-included in another block takes the new block data
+    Given the node has 20 blocks
+    And a LoanFunded log for loan 4 is emitted at block 15
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    Given the node reorgs from block 14
+    And the last emitted log is emitted again at block 17 with the block timestamp 1760099999
+    And the node mines to block 25
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    And the stored row of the last emitted transaction sits at block 17 with the node hash and timestamp of that block
+    And the cycle removed 1 event
+
+  @api-03
+  Scenario: A transaction re-included in an earlier block of another batch takes the new block data
+    Given the node has 40 blocks
+    And a LoanFunded log for loan 4 is emitted at block 39
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    Given the node reorgs from block 29
+    And the last emitted log is emitted again at block 30 with the block timestamp 1760088888
+    And the node mines to block 40
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    And the stored row of the last emitted transaction sits at block 30 with the node hash and timestamp of that block
+
+  @api-03
+  Scenario: Events older than the window are left alone
+    Given the node has 30 blocks
+    And a LoanRequested log for loan 2 is emitted at block 3
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    Given the id of the chain_event row at block 3 is remembered
+    And the node reorgs from block 20
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    And the chain_event row at block 3 is the remembered one
+    And the cycle removed 0 events
+
+  @api-03
+  Scenario: A reorg deeper than the window is not repaired
+    Given the node has 30 blocks
+    And a LoanRequested log for loan 2 is emitted at block 3
+    When the indexer runs once
+    Given the node reorgs from block 2
+    And the node mines to block 33
+    When the indexer runs once
+    Then chain_event has exactly 1 row
+    And the cycle removed 0 events

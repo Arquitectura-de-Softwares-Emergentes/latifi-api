@@ -21,7 +21,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -44,7 +43,7 @@ public class FakeChainNode {
   private final HttpServer server;
   private final AtomicLong head = new AtomicLong(0);
   private final AtomicLong chainId = new AtomicLong(80002);
-  private final AtomicInteger fork = new AtomicInteger(0);
+  private final List<Long> forkStarts = new CopyOnWriteArrayList<>();
   private final AtomicBoolean down = new AtomicBoolean(false);
   private final AtomicBoolean repeatLogs = new AtomicBoolean(false);
   private final Map<Long, List<ChainFixtures.Log>> logsByBlock = new ConcurrentHashMap<>();
@@ -115,14 +114,24 @@ public class FakeChainNode {
 
   /** Changes every block hash from now on, like a reorg that replaced all blocks. */
   public void forkHashes() {
-    fork.incrementAndGet();
+    forkStarts.add(0L);
+  }
+
+  /**
+   * A reorg from {@code fromBlock}: the logs of that block and every later block are gone, and the
+   * hashes of those blocks change. The head stays where it is. A test then emits the logs of the
+   * new branch and mines further.
+   */
+  public void reorg(long fromBlock) {
+    logsByBlock.keySet().removeIf(number -> number >= fromBlock);
+    forkStarts.add(fromBlock);
   }
 
   /** Removes every log and request and rewinds the chain. Tests call it between scenarios. */
   public void reset() {
     head.set(0);
     chainId.set(80002);
-    fork.set(0);
+    forkStarts.clear();
     down.set(false);
     repeatLogs.set(false);
     logsByBlock.clear();
@@ -253,9 +262,10 @@ public class FakeChainNode {
 
   private String blockHash(long number) {
     try {
+      long forks = forkStarts.stream().filter(start -> start <= number).count();
       byte[] digest =
           MessageDigest.getInstance("SHA-256")
-              .digest(("block:" + number + ":" + fork.get()).getBytes(StandardCharsets.UTF_8));
+              .digest(("block:" + number + ":" + forks).getBytes(StandardCharsets.UTF_8));
       StringBuilder out = new StringBuilder("0x");
       for (byte b : digest) {
         out.append(String.format("%02x", b));

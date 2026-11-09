@@ -35,6 +35,8 @@ public class IndexerSteps {
   private IndexerService indexer;
   private CycleResult lastResult;
   private String lastTxHash;
+  private ChainFixtures.Log lastLog;
+  private Long storedRowId;
   private int emitted;
 
   public IndexerSteps(
@@ -91,7 +93,24 @@ public class IndexerSteps {
                   txHash, emitted, loanId, ChainFixtures.BORROWER, BigInteger.valueOf(3_000_000));
           default -> throw new IllegalArgumentException("unknown event " + eventName);
         };
+    lastLog = log;
     node.emit(block, log);
+  }
+
+  @Given("the node reorgs from block {int}")
+  public void nodeReorgs(int block) {
+    node.reorg(block);
+  }
+
+  @Given("the node mines to block {int}")
+  public void nodeMinesTo(int block) {
+    node.mineTo(block);
+  }
+
+  @Given("the last emitted log is emitted again at block {int} with the block timestamp {long}")
+  public void lastLogEmittedAgain(int block, long epochSeconds) {
+    node.timestamp(block, epochSeconds);
+    node.emit(block, lastLog);
   }
 
   @Given("the node repeats every log in one answer")
@@ -144,6 +163,50 @@ public class IndexerSteps {
                 "interestRateBps", "1200",
                 "termDays", "90",
                 "installments", "3"));
+  }
+
+  @Then("the cycle removed {int} event(s)")
+  public void cycleRemoved(int expected) {
+    assertThat(lastResult.eventsRemoved()).isEqualTo(expected);
+  }
+
+  @Then("the last listener batch touched the loans {string}")
+  public void lastBatchTouched(String loans) {
+    TreeSet<Long> expected = new TreeSet<>();
+    Arrays.stream(loans.split(",")).map(Long::parseLong).forEach(expected::add);
+    TreeSet<Long> actual = new TreeSet<>();
+    listener
+        .deltas()
+        .get(listener.deltas().size() - 1)
+        .touchedLoanIds()
+        .forEach(id -> actual.add(id.longValueExact()));
+    assertThat(actual).isEqualTo(expected);
+  }
+
+  @Then(
+      "the stored row of the last emitted transaction sits at block {int} with the node hash and timestamp of that block")
+  public void rowOfLastTransaction(int block) {
+    Map<String, Object> row =
+        jdbc.queryForMap("select * from chain_event where tx_hash = ?", lastLog.txHash());
+    assertThat(row.get("block_number")).isEqualTo((long) block);
+    assertThat(((String) row.get("block_hash")).trim()).isEqualTo(node.hashOf(block));
+    assertThat(((Timestamp) row.get("block_timestamp")).toInstant().getEpochSecond())
+        .isEqualTo(node.timestampOf(block));
+  }
+
+  @Given("the id of the chain_event row at block {int} is remembered")
+  public void rememberRowId(int block) {
+    storedRowId =
+        jdbc.queryForObject(
+            "select id from chain_event where block_number = ?", Long.class, (long) block);
+  }
+
+  @Then("the chain_event row at block {int} is the remembered one")
+  public void rowIsTheRemembered(int block) {
+    assertThat(
+            jdbc.queryForObject(
+                "select id from chain_event where block_number = ?", Long.class, (long) block))
+        .isEqualTo(storedRowId);
   }
 
   @Then("the checkpoint is block {int}")
