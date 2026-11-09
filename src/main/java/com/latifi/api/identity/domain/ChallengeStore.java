@@ -16,4 +16,7 @@ public interface ChallengeStore {
    * finds it unused and not yet expired at {@code now}.
    */
   boolean consume(UUID id, Instant now);
+
+  /** Deletes the challenges whose expiry is before the cutoff and returns how many it removed. */
+  int deleteExpiredBefore(Instant cutoff);
 }

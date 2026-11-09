@@ -1,5 +1,6 @@
 package com.latifi.api.config;
 
+import com.latifi.api.identity.infrastructure.AuthRateLimiter;
 import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,6 +10,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -25,13 +27,19 @@ public class SecurityConfig {
       HttpSecurity http,
       ApiErrorAuthenticationEntryPoint entryPoint,
       ApiErrorAccessDeniedHandler accessDeniedHandler,
-      JwtDecoder jwtDecoder)
+      JwtDecoder jwtDecoder,
+      AuthRateLimiter limiter,
+      ClientIpResolver clientIps,
+      ApiErrorWriter errorWriter)
       throws Exception {
+    // Created here and not exposed as a bean, so the servlet container does not register it twice.
+    AuthRateLimitFilter rateLimitFilter = new AuthRateLimitFilter(limiter, clientIps, errorWriter);
     http.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .csrf(AbstractHttpConfigurer::disable)
         .httpBasic(AbstractHttpConfigurer::disable)
         .formLogin(AbstractHttpConfigurer::disable)
         .logout(AbstractHttpConfigurer::disable)
+        .addFilterBefore(rateLimitFilter, BearerTokenAuthenticationFilter.class)
         .oauth2ResourceServer(
             o ->
                 o.jwt(j -> j.decoder(jwtDecoder).jwtAuthenticationConverter(jwtConverter()))

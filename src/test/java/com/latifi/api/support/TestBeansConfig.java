@@ -32,6 +32,11 @@ public class TestBeansConfig {
 
   @Bean
   DynamicPropertyRegistrar jwtSecretRegistrar() {
-    return registry -> registry.add("latifi.jwt.secret", () -> JWT_SECRET);
+    return registry -> {
+      registry.add("latifi.jwt.secret", () -> JWT_SECRET);
+      registry.add("latifi.ratelimit.trust-forwarded-for", () -> "true");
+      registry.add("latifi.ratelimit.auth-per-ip-capacity", () -> "10");
+      registry.add("latifi.ratelimit.challenge-per-address-capacity", () -> "5");
+    };
   }
 }

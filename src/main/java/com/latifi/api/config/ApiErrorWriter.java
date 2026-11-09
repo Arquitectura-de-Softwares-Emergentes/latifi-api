@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Locale;
 import org.springframework.context.MessageSource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.LocaleResolver;
@@ -32,9 +33,22 @@ class ApiErrorWriter {
 
   void write(HttpServletRequest request, HttpServletResponse response, ApiErrorCode code)
       throws IOException {
+    write(request, response, code, 0);
+  }
+
+  /** Writes the error and, when {@code retryAfterSeconds} is positive, the Retry-After header. */
+  void write(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      ApiErrorCode code,
+      long retryAfterSeconds)
+      throws IOException {
     Locale locale = localeResolver.resolveLocale(request);
     String message = messages.getMessage(code.messageKey(), null, locale);
     response.setStatus(code.status().value());
+    if (retryAfterSeconds > 0) {
+      response.setHeader(HttpHeaders.RETRY_AFTER, Long.toString(retryAfterSeconds));
+    }
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
     mapper.writeValue(
         response.getOutputStream(), new ApiError(code.status().value(), code.name(), message));

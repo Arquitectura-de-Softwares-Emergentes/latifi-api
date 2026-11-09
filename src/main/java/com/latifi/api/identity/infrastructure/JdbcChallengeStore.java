@@ -73,6 +73,13 @@ public class JdbcChallengeStore implements ChallengeStore {
     return changed == 1;
   }
 
+  @Override
+  public int deleteExpiredBefore(Instant cutoff) {
+    return jdbc.sql("delete from auth_challenge where expires_at < :cutoff")
+        .param("cutoff", utc(cutoff))
+        .update();
+  }
+
   private static OffsetDateTime utc(Instant instant) {
     return instant.atOffset(ZoneOffset.UTC);
   }

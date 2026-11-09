@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -41,7 +42,13 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(ApiException.class)
   ResponseEntity<ApiError> handleApi(ApiException e) {
-    return respond(e.code(), e.messageArgs());
+    ResponseEntity<ApiError> response = respond(e.code(), e.messageArgs());
+    if (e.retryAfterSeconds() <= 0) {
+      return response;
+    }
+    return ResponseEntity.status(response.getStatusCode())
+        .header(HttpHeaders.RETRY_AFTER, Long.toString(e.retryAfterSeconds()))
+        .body(response.getBody());
   }
 
   @ExceptionHandler({
