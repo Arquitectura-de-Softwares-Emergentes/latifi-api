@@ -1,6 +1,7 @@
 package com.latifi.api.ledger.domain;
 
 import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
 
 /** Storage port of the loan read model. */
@@ -13,4 +14,7 @@ public interface LoanRepository {
   void delete(BigInteger loanId);
 
   Optional<LoanState> find(BigInteger loanId);
+
+  /** The loans of a borrower (lowercase address), ordered by loan id. */
+  List<LoanState> findByBorrower(String borrower);
 }
