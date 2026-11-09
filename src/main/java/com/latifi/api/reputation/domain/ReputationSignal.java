@@ -30,6 +30,6 @@ public record ReputationSignal(
 
   /** Rank that orders the profile before chain events that share a timestamp. */
   public int sourceRank() {
-    throw new UnsupportedOperationException();
+    return type == SignalType.PROFILE_COMPLETED ? 0 : 1;
   }
 }
