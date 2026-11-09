@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.latifi.api.bdd.support.ApiClient;
 import com.latifi.api.bdd.support.TestWallet;
+import com.latifi.api.bdd.support.Wallets;
 import com.latifi.api.identity.domain.ProfileSaved;
 import com.latifi.api.support.ContractAssertions;
 import com.latifi.api.support.TestBeansConfig.ProfileEventCollector;
@@ -23,7 +24,6 @@ import io.cucumber.java.en.When;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -40,8 +40,8 @@ public class ProfileSteps {
   private final JdbcTemplate jdbc;
   private final ProfileEventCollector collector;
 
-  private final Map<String, TestWallet> wallets = new HashMap<>();
-  private final Map<String, String> tokens = new HashMap<>();
+  private final Map<String, TestWallet> wallets;
+  private final Map<String, String> tokens;
 
   private Request.Method lastMethod;
   private String lastPath;
@@ -53,10 +53,13 @@ public class ProfileSteps {
   private String capturedName;
   private String capturedContact;
 
-  public ProfileSteps(ApiClient api, JdbcTemplate jdbc, ProfileEventCollector collector) {
+  public ProfileSteps(
+      ApiClient api, JdbcTemplate jdbc, ProfileEventCollector collector, Wallets registry) {
     this.api = api;
     this.jdbc = jdbc;
     this.collector = collector;
+    this.wallets = registry.wallets();
+    this.tokens = registry.tokens();
   }
 
   @Given("the wallet {word} is generated at run time")

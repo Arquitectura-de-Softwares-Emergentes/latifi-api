@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -92,6 +93,20 @@ public class JdbcLoanRepository implements LoanRepository {
         .param("loanId", decimal(loanId))
         .query(JdbcLoanRepository::state)
         .optional();
+  }
+
+  @Override
+  public List<LoanState> findByBorrower(String borrower) {
+    return jdbc.sql(
+            """
+            select loan_id, borrower, lender, principal, interest_rate_bps, term_days,
+                   installments, status, total_due, total_paid, installments_paid, requested_at,
+                   funded_at, final_due_date, next_due_date
+            from loan where borrower = :borrower order by loan_id
+            """)
+        .param("borrower", borrower.toLowerCase(Locale.ROOT))
+        .query(JdbcLoanRepository::state)
+        .list();
   }
 
   private static LoanState state(ResultSet rs, int row) throws SQLException {
