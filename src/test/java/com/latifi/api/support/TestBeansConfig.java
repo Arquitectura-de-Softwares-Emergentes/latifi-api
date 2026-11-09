@@ -1,11 +1,15 @@
 package com.latifi.api.support;
 
+import com.latifi.api.identity.domain.ProfileSaved;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.event.EventListener;
 import org.springframework.test.context.DynamicPropertyRegistrar;
 
 /** Beans that replace production ones in tests. Later plans add their own here. */
@@ -38,5 +42,29 @@ public class TestBeansConfig {
       registry.add("latifi.ratelimit.auth-per-ip-capacity", () -> "10");
       registry.add("latifi.ratelimit.challenge-per-address-capacity", () -> "5");
     };
+  }
+
+  @Bean
+  ProfileEventCollector profileEventCollector() {
+    return new ProfileEventCollector();
+  }
+
+  /** Keeps every ProfileSaved event, so scenarios can check what the reputation seam receives. */
+  public static class ProfileEventCollector {
+
+    private final List<ProfileSaved> events = new CopyOnWriteArrayList<>();
+
+    @EventListener
+    void on(ProfileSaved event) {
+      events.add(event);
+    }
+
+    public List<ProfileSaved> events() {
+      return List.copyOf(events);
+    }
+
+    public void clear() {
+      events.clear();
+    }
   }
 }
