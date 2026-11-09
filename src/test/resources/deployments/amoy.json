@@ -1,0 +1,15 @@
+{
+  "chainId": 80002,
+  "network": "polygon-amoy",
+  "release": "v0.2.0",
+  "contracts": {
+    "LoanBook": {
+      "address": "0xccb8ad15a4954138c987a77924ceab468a843266",
+      "blockNumber": "0x3148190"
+    },
+    "MockStablecoin": {
+      "address": "0x66757f1cc66b278bfc0eefad7e3cac1d70fd4f8b",
+      "blockNumber": "0x314818d"
+    }
+  }
+}

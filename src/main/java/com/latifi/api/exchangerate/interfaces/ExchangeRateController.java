@@ -4,6 +4,8 @@ import com.latifi.api.exchangerate.application.RateService;
 import com.latifi.api.exchangerate.application.RateService.Converted;
 import com.latifi.api.exchangerate.application.RateService.Quote;
 import com.latifi.api.exchangerate.domain.Conversion;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * app calls these routes and never the rate provider.
  */
 @RestController
+@Tag(name = "ExchangeRate")
 @RequestMapping("/exchange-rate")
 public class ExchangeRateController {
 
@@ -30,7 +33,8 @@ public class ExchangeRateController {
   }
 
   @GetMapping("/convert")
-  public ConvertResponse convert(@RequestParam String amount, @RequestParam String currency) {
+  @Operation(summary = "Convert a stablecoin amount to a local currency")
+  public ConvertResponse convertAmount(@RequestParam String amount, @RequestParam String currency) {
     Converted converted = rates.convert(amount, currency);
     return new ConvertResponse(
         converted.amount().toString(),
@@ -42,7 +46,8 @@ public class ExchangeRateController {
   }
 
   @GetMapping("/rates")
-  public List<RateQuoteDto> list() {
+  @Operation(summary = "List the available rates and their age")
+  public List<RateQuoteDto> listRates() {
     return rates.list().stream().map(RateQuoteDto::from).toList();
   }
 
