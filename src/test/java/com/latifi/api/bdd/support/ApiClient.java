@@ -59,7 +59,12 @@ public class ApiClient {
   private void send(String method, String path, String json) {
     HttpRequest.Builder request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + path));
-    headers.forEach(request::header);
+    headers.forEach(
+        (name, value) -> {
+          if (!value.isBlank()) {
+            request.header(name, value);
+          }
+        });
     if (bearerToken != null) {
       request.header("Authorization", "Bearer " + bearerToken);
     }
