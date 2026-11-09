@@ -7,6 +7,7 @@ import com.latifi.api.ledger.domain.ChainEvent;
 import com.latifi.api.ledger.domain.ChainEventRepository;
 import com.latifi.api.ledger.domain.ChainEventType;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -128,6 +129,18 @@ public class JdbcChainEventRepository implements ChainEventRepository {
         .param("ids", doomed.stream().map(StoredEvent::id).toList())
         .update();
     return doomed.stream().map(StoredEvent::event).toList();
+  }
+
+  @Override
+  public List<ChainEvent> findByLoanId(BigInteger loanId) {
+    return jdbc
+        .sql(SELECT_EVENT + " where loan_id = :loanId order by block_number, log_index")
+        .param("loanId", new BigDecimal(loanId))
+        .query(this::storedEvent)
+        .list()
+        .stream()
+        .map(StoredEvent::event)
+        .toList();
   }
 
   private static final String SELECT_EVENT =
