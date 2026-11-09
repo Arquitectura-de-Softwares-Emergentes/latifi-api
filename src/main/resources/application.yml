@@ -28,6 +28,14 @@ latifi:
     trust-forwarded-for: ${LATIFI_TRUST_FORWARDED_FOR:false}
   chain:
     id: 80002
+  reputation:
+    start-score: 500
+    on-time-delta: 20
+    late-per-day: 5
+    late-cap: 100
+    default-delta: 200
+    profile-bonus: 50
+    min-scored-principal: 1000000
 
 management:
   endpoints:
