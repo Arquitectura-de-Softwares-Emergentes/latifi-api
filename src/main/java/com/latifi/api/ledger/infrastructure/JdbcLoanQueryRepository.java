@@ -1,5 +1,7 @@
 package com.latifi.api.ledger.infrastructure;
 
+import com.latifi.api.ledger.domain.LoanPageResult;
+import com.latifi.api.ledger.domain.LoanQuery;
 import com.latifi.api.ledger.domain.LoanQueryRepository;
 import com.latifi.api.ledger.domain.LoanState;
 import com.latifi.api.ledger.domain.LoanStatus;
@@ -10,6 +12,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -33,6 +36,16 @@ public class JdbcLoanQueryRepository implements LoanQueryRepository {
         .param("loanId", new BigDecimal(loanId))
         .query(JdbcLoanQueryRepository::view)
         .optional();
+  }
+
+  @Override
+  public LoanPageResult search(LoanQuery query) {
+    LoanQuerySql.Statement page = LoanQuerySql.page(query);
+    List<LoanView> items =
+        jdbc.sql(page.sql()).params(page.params()).query(JdbcLoanQueryRepository::view).list();
+    LoanQuerySql.Statement count = LoanQuerySql.count(query);
+    Long total = jdbc.sql(count.sql()).params(count.params()).query(Long.class).single();
+    return new LoanPageResult(items, query.page(), query.size(), total);
   }
 
   static LoanView view(ResultSet rs, int row) throws SQLException {

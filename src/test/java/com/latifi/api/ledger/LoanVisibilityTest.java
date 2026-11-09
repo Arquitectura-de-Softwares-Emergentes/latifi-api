@@ -34,7 +34,14 @@ import org.springframework.test.context.TestPropertySource;
  */
 @LatifiIntegrationTest
 @TestPropertySource(
-    properties = {"latifi.indexer.enabled=true", "latifi.indexer.poll-interval=PT0.1S"})
+    properties = {
+      "latifi.indexer.enabled=true",
+      "latifi.indexer.poll-interval=PT0.1S",
+      // Gives this class a Spring context of its own. Without it the cache would share one context
+      // with IndexerSchedulerTest, and the first class to finish would stop the schedule that the
+      // other still needs.
+      "latifi.test.context=loan-visibility"
+    })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class LoanVisibilityTest {
 

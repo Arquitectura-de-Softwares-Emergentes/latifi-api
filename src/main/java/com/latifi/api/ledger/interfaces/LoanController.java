@@ -2,12 +2,15 @@ package com.latifi.api.ledger.interfaces;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.latifi.api.ledger.application.LoanQueryService;
+import com.latifi.api.ledger.domain.LoanPageResult;
 import com.latifi.api.ledger.domain.LoanState;
 import com.latifi.api.ledger.domain.LoanView;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -25,9 +28,51 @@ public class LoanController {
     this.loans = loans;
   }
 
+  /**
+   * The feed. Every parameter is plain text or a nullable number, so a malformed value reaches the
+   * validation of the service, or the type mismatch handler, and never a framework default.
+   */
+  @GetMapping
+  public LoanPageDto list(
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) String minAmount,
+      @RequestParam(required = false) String maxAmount,
+      @RequestParam(required = false) Integer maxTermDays,
+      @RequestParam(required = false) String minLevel,
+      @RequestParam(required = false) String borrower,
+      @RequestParam(required = false) String lender,
+      @RequestParam(required = false) String sort,
+      @RequestParam(required = false) Integer page,
+      @RequestParam(required = false) Integer size) {
+    return LoanPageDto.from(
+        loans.search(
+            status,
+            minAmount,
+            maxAmount,
+            maxTermDays,
+            minLevel,
+            borrower,
+            lender,
+            sort,
+            page,
+            size));
+  }
+
   @GetMapping("/{loanId}")
   public LoanSummaryDto get(@PathVariable String loanId) {
     return LoanSummaryDto.from(loans.get(loanId));
+  }
+
+  /** The LoanPage of the contract. */
+  public record LoanPageDto(List<LoanSummaryDto> items, int page, int size, long totalItems) {
+
+    static LoanPageDto from(LoanPageResult result) {
+      return new LoanPageDto(
+          result.items().stream().map(LoanSummaryDto::from).toList(),
+          result.page(),
+          result.size(),
+          result.totalItems());
+    }
   }
 
   /** Reputation of the borrower of a loan. */
