@@ -2,15 +2,15 @@ package com.latifi.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.latifi.api.support.LatifiIntegrationTest;
 import java.sql.Connection;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Connects to a real PostgreSQL; the ci service container exercises it. */
-@SpringBootTest
+/** Connects to a real PostgreSQL 16 that Testcontainers starts for the test run. */
+@LatifiIntegrationTest
 class DatabaseConnectivityTest {
 
   @Autowired private DataSource dataSource;

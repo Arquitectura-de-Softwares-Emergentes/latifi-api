@@ -70,13 +70,21 @@ Releases use SemVer. Right after a release or hotfix merges into `main`, create 
 
 ## Running the checks locally
 
-Run the same checks as the `ci` job before you push. You need JDK 21 and a PostgreSQL that the `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME` and `SPRING_DATASOURCE_PASSWORD` variables point to:
+Run the same checks as the `ci` job before you push. You need JDK 21 and a running Docker daemon. You do not need a database or any datasource environment variable, because Testcontainers starts PostgreSQL 16 for the tests:
 
 ```
 ./mvnw -B verify
 ```
 
-The build runs the tests against that database, then checks formatting with Spotless. Run `./mvnw spotless:apply` to fix formatting problems.
+The build runs the tests against that container, then checks formatting with Spotless. Run `./mvnw spotless:apply` to fix formatting problems.
+
+### Running one feature
+
+Every Cucumber scenario carries tags. To run only the sign-in feature:
+
+```
+./mvnw -B test -Dtest=RunCucumberTest -Dcucumber.filter.tags=@auth
+```
 
 To try the commit rules without GitHub, run `bash .github/scripts/commit-lint.test.sh`.
 
