@@ -1,6 +1,7 @@
 package com.latifi.api.ledger.infrastructure;
 
 import com.latifi.api.config.ConditionalOnChainRpc;
+import com.latifi.api.config.SchedulingConfig;
 import com.latifi.api.ledger.application.IndexerService;
 import com.latifi.api.ledger.domain.CycleResult;
 import org.slf4j.Logger;
@@ -10,8 +11,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Runs the indexer on a fixed delay. The delay counts from the end of one cycle, so two cycles
- * never overlap, and a cycle that fails never stops the schedule.
+ * Runs the indexer on a fixed delay, on a scheduler of its own. The delay counts from the end of
+ * one cycle, so two cycles never overlap, and a cycle that fails never stops the schedule. A cycle
+ * that takes minutes, as the first catch-up can, does not hold back the other scheduled jobs.
  */
 @Component
 @ConditionalOnChainRpc
@@ -26,7 +28,9 @@ public class IndexerScheduler {
     this.indexer = indexer;
   }
 
-  @Scheduled(fixedDelayString = "${latifi.indexer.poll-interval}")
+  @Scheduled(
+      scheduler = SchedulingConfig.INDEXER_SCHEDULER,
+      fixedDelayString = "${latifi.indexer.poll-interval}")
   public void tick() {
     try {
       CycleResult result = indexer.runOnce();
