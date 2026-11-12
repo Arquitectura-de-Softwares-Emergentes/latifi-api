@@ -211,10 +211,6 @@ expect_err() {
   grep -q -- "$1" "$T/err" || fail "$2: stderr does not mention '$1'"
 }
 
-calls() {
-  [ -f "$STUB_DIR/calls.log" ] && cut -f2 "$STUB_DIR/calls.log" | sed 's/?.*//' | tr '\n' ' '
-}
-
 body_of() {
   # body_of PATH prints the JSON body recorded for the first call to that path.
   awk -F '\t' -v p="$1" '$2 == p { print $3; exit }' "$STUB_DIR/calls.log"
@@ -469,7 +465,345 @@ run bash "$START_BLOCK"
 expect_rc 3 "no node url"
 ok
 
-# @@SMOKE_AND_OPS@@
+# ---- task 2: live smoke check ---------------------------------------------------------------------
+
+SMOKE="$HERE/smoke-live.sh"
+OPS="$HERE/ops.sh"
+INDEXER="$HERE/indexer-status.sh"
+ORIGIN="https://$HOST"
+
+mkdir -p "$T/certs"
+"$STUB_REAL_OPENSSL" req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout "$T/certs/key.pem" -out "$T/certs/good.pem" -days 90 -subj "/CN=$HOST" > /dev/null 2>&1 \
+  || { echo "dokploy-test: could not make a test certificate" >&2; exit 1; }
+"$STUB_REAL_OPENSSL" req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout "$T/certs/key2.pem" -out "$T/certs/short.pem" -days 3 -subj "/CN=$HOST" > /dev/null 2>&1 \
+  || { echo "dokploy-test: could not make a test certificate" >&2; exit 1; }
+
+route_key() {
+  printf '%s_%s' "$1" "$2" | tr -c 'A-Za-z0-9' '_'
+}
+
+# attr METHOD URL NAME VALUE sets a side file of a route (redirect, verify, ctype, exit, code).
+attr() {
+  printf '%s' "$4" > "$STUB_DIR/routes/$(route_key "$1" "$2").$3"
+}
+
+CHALLENGE_OK="$(jq -nc --arg msg "$HOST wants you to sign in with your Ethereum account:
+0x52908400098527886E0F7030069857D2E4169EE7
+
+Sign in to LatiFi. This request does not trigger a blockchain transaction or cost any fee.
+
+URI: $ORIGIN
+Version: 1
+Chain ID: 80002" '{challengeId: "3f2b8c1e-5d4a-4c7b-9a10-2e6f7d8c9b01", nonce: "9c1d4f7a2b8e4d3f5a6b7c8d9e0f1a2b", message: $msg}')"
+
+smoke_setup() {
+  reset
+  cp "$T/certs/good.pem" "$STUB_DIR/cert.pem"
+  route GET "http://$HOST/actuator/health" '' 301
+  attr GET "http://$HOST/actuator/health" redirect "$ORIGIN/actuator/health"
+  route GET "$ORIGIN/actuator/health" '{"status":"UP"}'
+  route GET "$ORIGIN/swagger-ui.html" '<html><title>Swagger UI</title><div id="swagger-ui"></div></html>'
+  attr GET "$ORIGIN/swagger-ui.html" ctype "text/html"
+  route GET "$ORIGIN/v3/api-docs" "{\"openapi\":\"3.0.1\",\"info\":{\"title\":\"LatiFi API\"},\"servers\":[{\"url\":\"$ORIGIN\"}]}"
+  route GET "$ORIGIN/api/v1/loans" '{"code":"UNAUTHENTICATED"}' 401
+  route GET "$ORIGIN/actuator/env" '{"status":404}' 404
+  route GET "$ORIGIN/actuator/beans" '{"status":404}' 404
+  route POST "$ORIGIN/api/v1/auth/challenge" "$CHALLENGE_OK"
+}
+
+smoke_fail() {
+  # smoke_fail CHECK: the smoke run must exit 1 and name the check.
+  run bash "$SMOKE" "$ORIGIN"
+  expect_rc 1 "smoke $1"
+  expect_err "FAIL $1" "smoke $1"
+  if grep -q '^smoke-live: ok' "$T/out"; then fail "smoke $1 printed ok"; fi
+  ok
+}
+
+# healthy origin
+smoke_setup
+run bash "$SMOKE" "$ORIGIN" --evidence "$T/evidence.json"
+expect_rc 0 "healthy smoke"
+[ "$(tail -n 1 "$T/out")" = "smoke-live: ok $ORIGIN" ] || fail "the last line is not the ok line"
+jq -e --arg h "$HOST" '.host == $h and .status.health == "200" and .status.protectedRoute == "401" and .status.httpRedirect == "301" and (.certificateNotAfter | length > 0) and (.checkedAtUtc | endswith("Z"))' "$T/evidence.json" > /dev/null || fail "evidence content"
+ok
+
+# bad usage
+smoke_setup
+run bash "$SMOKE" "http://$HOST"
+expect_rc 2 "http origin"
+ok
+
+smoke_setup
+route GET "http://$HOST/actuator/health" '{"status":"UP"}' 200
+smoke_fail redirect
+
+smoke_setup
+attr GET "http://$HOST/actuator/health" redirect "https://other.latifi.test/actuator/health"
+smoke_fail redirect
+
+smoke_setup
+attr GET "$ORIGIN/actuator/health" verify 19
+smoke_fail certificate
+
+smoke_setup
+attr GET "$ORIGIN/actuator/health" exit 60
+smoke_fail certificate
+
+smoke_setup
+cp "$T/certs/short.pem" "$STUB_DIR/cert.pem"
+smoke_fail certificate-expiry
+
+smoke_setup
+route GET "$ORIGIN/actuator/health" '{"status":"DOWN"}' 503
+smoke_fail health
+
+smoke_setup
+route GET "$ORIGIN/actuator/health" '{"status":"DOWN"}'
+smoke_fail health
+
+smoke_setup
+route GET "$ORIGIN/actuator/health" '{"status":"UP","components":{"db":{"status":"UP"}}}'
+smoke_fail health
+
+smoke_setup
+attr GET "$ORIGIN/actuator/health" ctype "text/html"
+smoke_fail health
+
+smoke_setup
+route GET "$ORIGIN/swagger-ui.html" 'not found' 404
+smoke_fail swagger-ui
+
+smoke_setup
+route GET "$ORIGIN/swagger-ui.html" '<html>a page without the viewer</html>'
+smoke_fail swagger-ui
+
+smoke_setup
+route GET "$ORIGIN/v3/api-docs" 'gone' 404
+smoke_fail openapi
+
+smoke_setup
+route GET "$ORIGIN/v3/api-docs" "{\"info\":{\"title\":\"Other API\"},\"servers\":[{\"url\":\"$ORIGIN\"}]}"
+smoke_fail openapi
+
+smoke_setup
+route GET "$ORIGIN/v3/api-docs" '{"info":{"title":"LatiFi API"},"servers":[{"url":"http://localhost:8080"}]}'
+smoke_fail openapi
+
+smoke_setup
+route GET "$ORIGIN/api/v1/loans" '{"items":[]}' 200
+smoke_fail protected-route
+
+smoke_setup
+route GET "$ORIGIN/api/v1/loans" 'Unauthorized' 401
+smoke_fail protected-route
+
+smoke_setup
+route GET "$ORIGIN/actuator/env" '{"propertySources":[]}' 200
+smoke_fail actuator-env
+
+smoke_setup
+route GET "$ORIGIN/actuator/beans" '{"contexts":{}}' 200
+smoke_fail actuator-beans
+
+smoke_setup
+route POST "$ORIGIN/api/v1/auth/challenge" "$(printf '%s' "$CHALLENGE_OK" | sed "s/$HOST wants/localhost wants/")"
+smoke_fail challenge
+
+smoke_setup
+route POST "$ORIGIN/api/v1/auth/challenge" "$(printf '%s' "$CHALLENGE_OK" | sed "s|URI: $ORIGIN|URI: http://localhost:8080|")"
+smoke_fail challenge
+
+smoke_setup
+route POST "$ORIGIN/api/v1/auth/challenge" "$(printf '%s' "$CHALLENGE_OK" | sed 's/9c1d4f7a2b8e4d3f5a6b7c8d9e0f1a2b/short/')"
+smoke_fail challenge
+
+smoke_setup
+route POST "$ORIGIN/api/v1/auth/challenge" '{"code":"INTERNAL"}' 500
+smoke_fail challenge
+
+# ---- task 2: operations wrapper -------------------------------------------------------------------
+
+ops_setup() {
+  reset
+  jq -n '{applicationId: "a1", appName: "app-latifi-xyz"}' > "$LATIFI_HOME/dokploy-state.json"
+  chmod 600 "$LATIFI_HOME/dokploy-state.json"
+  route GET "$PANEL/application.one" '{"applicationId":"a1","appName":"app-latifi-xyz","applicationStatus":"done"}'
+  route GET "$PANEL/docker.getContainersByAppNameMatch" '[{"containerId":"c0ffee1234","name":"app-latifi-xyz.1.abcdef","state":"running","status":"Up 2 minutes (healthy)"}]'
+  route POST "$PANEL/application.stop" '{}'
+  route POST "$PANEL/application.start" '{}'
+  route POST "$PANEL/application.redeploy" 'true'
+  route POST "$PANEL/docker.killContainer" 'true'
+  route GET "$PANEL/application.readLogs" "$(jq -n --arg t "line one
+node $CANARY_RPC key
+secret $CANARY_JWT and $CANARY_DB
+line four" '$t')"
+}
+
+ops_posts() {
+  awk -F '\t' '$1 == "POST" { print $2 }' "$STUB_DIR/calls.log" | tr '\n' ' '
+}
+
+# status
+ops_setup
+run bash "$OPS" status
+expect_rc 0 "ops status"
+grep -q 'build status: done' "$T/out" || fail "status lacks the build status"
+grep -q 'container: app-latifi-xyz.1.abcdef state=running status=Up 2 minutes (healthy)' "$T/out" || fail "status lacks the container line"
+grep -Eq '^ops: status at 20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$' "$T/out" || fail "status lacks the UTC time"
+grep -q 'appName=app-latifi-xyz' "$STUB_DIR/calls.log" || fail "status did not ask for the containers of the appName"
+ok
+
+# status with no container
+ops_setup
+route GET "$PANEL/docker.getContainersByAppNameMatch" '[]'
+run bash "$OPS" status
+expect_rc 0 "ops status without container"
+grep -q 'none found' "$T/out" || fail "status does not say there is no container"
+ok
+
+# logs: tail, since, redaction through the runtime file and through the key pattern
+ops_setup
+run bash "$OPS" logs --tail 50
+expect_rc 0 "ops logs"
+grep -q 'tail=50&since=all' "$STUB_DIR/calls.log" || fail "logs did not send tail and since"
+grep -q 'line one' "$T/out" && grep -q 'line four' "$T/out" || fail "logs lost lines"
+grep -q 'ops: logs at 20' "$T/err" || fail "logs lack the UTC time"
+for c in "$CANARY_JWT" "$CANARY_DB" "$CANARY_RPC_KEY"; do
+  if grep -q -- "$c" "$T/out" "$T/err"; then fail "logs leaked a canary"; fi
+done
+ok
+
+ops_setup
+rm -f "$LATIFI_HOME/latifi-api.env"
+route GET "$PANEL/application.readLogs" "$(jq -n --arg t "node $CANARY_RPC answered 429" '$t')"
+run bash "$OPS" logs
+expect_rc 0 "ops logs without the runtime file"
+if grep -q -- "$CANARY_RPC_KEY" "$T/out"; then fail "the key pattern did not hide the node key"; fi
+ok
+
+# logs with a raw control character still read
+ops_setup
+printf '"before\001after"' > "$STUB_DIR/routes/$(route_key GET "$PANEL/application.readLogs").body"
+run bash "$OPS" logs
+expect_rc 0 "ops logs with a control character"
+grep -q 'before' "$T/out" || fail "the control character broke the log reader"
+ok
+
+# stop, start, redeploy
+ops_setup
+for sub in stop start redeploy; do
+  run bash "$OPS" "$sub"
+  expect_rc 0 "ops $sub"
+  grep -Eq "^ops: $sub (requested|queued) at 20" "$T/out" || fail "ops $sub lacks the UTC time"
+done
+[ "$(ops_posts)" = "application.stop application.start application.redeploy " ] || fail "ops posted $(ops_posts)"
+for sub in stop start redeploy; do
+  [ "$(awk -F '\t' -v p="application.$sub" '$2 == p { print $3; exit }' "$STUB_DIR/calls.log" | jq -r .applicationId)" = "a1" ] || fail "ops $sub body"
+done
+ok
+
+# kill
+ops_setup
+run bash "$OPS" kill
+expect_rc 0 "ops kill"
+[ "$(ops_posts)" = "docker.killContainer " ] || fail "kill posted $(ops_posts)"
+[ "$(body_of docker.killContainer | jq -r .containerId)" = "c0ffee1234" ] || fail "kill body"
+grep -Eq '^ops: kill sent at 20' "$T/out" || fail "kill lacks the UTC time"
+[ "$(sort -u "$STUB_DIR/keyhdr.log")" = "yes" ] || fail "an ops call went out without the key header on stdin"
+if grep -q -- "$CANARY_TOKEN" "$STUB_DIR/argv.log"; then fail "the token reached curl argv in ops"; fi
+ok
+
+# kill degrades to the docker kill line when the API refuses
+for refused in 404 403; do
+  ops_setup
+  route POST "$PANEL/docker.killContainer" '{"message":"not found"}' "$refused"
+  run bash "$OPS" kill
+  expect_rc 5 "ops kill refused $refused"
+  grep -q 'docker kill app-latifi-xyz.1.abcdef' "$T/err" || fail "kill fallback lacks the docker kill line"
+  ok
+done
+
+# kill with another error is an API error
+ops_setup
+route POST "$PANEL/docker.killContainer" '{"message":"boom"}' 500
+run bash "$OPS" kill
+expect_rc 4 "ops kill 500"
+ok
+
+# kill with nothing running
+ops_setup
+route GET "$PANEL/docker.getContainersByAppNameMatch" '[{"containerId":"dead","name":"app-latifi-xyz.1.old","state":"exited","status":"Exited (1)"}]'
+run bash "$OPS" kill
+expect_rc 3 "ops kill nothing running"
+[ "$(ops_posts)" = "" ] || fail "kill posted with nothing running"
+ok
+
+# no state file
+ops_setup
+rm -f "$LATIFI_HOME/dokploy-state.json"
+run bash "$OPS" status
+expect_rc 3 "ops without state"
+ok
+
+# bad usage
+ops_setup
+run bash "$OPS" explode
+expect_rc 2 "ops bad command"
+run bash "$OPS" logs --tail 0
+expect_rc 2 "ops bad tail"
+ok
+
+# ---- task 2: indexer status -----------------------------------------------------------------------
+
+L_START="2026-11-12T10:00:00.000Z  INFO 1 --- [main] c.l.a.l.i.IndexerStartupReport : The indexer starts against node host amoy-node.canary.test, every PT5S, from block 51700000"
+L_OFF="2026-11-12T10:00:00.000Z  WARN 1 --- [main] c.l.a.l.i.IndexerStartupReport : The indexer is enabled but latifi.chain.rpc-url is empty, so it stays off"
+L_MIRROR="2026-11-12T10:01:00.000Z  INFO 1 --- [scheduling-1] c.l.a.l.i.IndexerScheduler : Indexer mirrored 3 new events up to block 51700123"
+L_SKIP="2026-11-12T10:02:00.000Z  INFO 1 --- [scheduling-1] c.l.a.l.i.IndexerScheduler : Indexer cycle skipped: another instance holds the lock"
+L_FAIL="2026-11-12T10:03:00.000Z  WARN 1 --- [scheduling-1] c.l.a.l.i.IndexerScheduler : Indexer cycle failed, the next one retries: rate limited by node amoy-node.canary.test"
+L_NOISE="2026-11-12T10:00:30.000Z  INFO 1 --- [http-nio-8080-exec-1] c.l.a.SomeController : GET /api/v1/loans 200"
+
+verdict() {
+  # verdict EXPECTED_RC EXPECTED_WORD LINES...
+  local want_rc="$1" word="$2" text
+  shift 2
+  ops_setup
+  text="$(printf '%s\n' "$@")"
+  route GET "$PANEL/application.readLogs" "$(jq -n --arg t "$text" '$t')"
+  run bash "$INDEXER"
+  expect_rc "$want_rc" "indexer verdict $word"
+  [ "$(tail -n 1 "$T/out")" = "indexer: $word" ] || fail "verdict was '$(tail -n 1 "$T/out")', expected 'indexer: $word'"
+  ok
+}
+
+verdict 0 running "$L_NOISE" "$L_START" "$L_MIRROR" "$L_SKIP"
+verdict 0 running "$L_START"
+verdict 0 running "$L_START" "$L_FAIL" "$L_MIRROR"
+verdict 1 failing "$L_START" "$L_MIRROR" "$L_FAIL"
+verdict 1 failing "$L_START" "$L_FAIL" "$L_SKIP" "$L_FAIL"
+verdict 0 running "$L_START" "$L_FAIL" "$L_START"
+verdict 1 off "$L_OFF"
+verdict 1 off "$L_START" "$L_FAIL" "$L_OFF"
+verdict 1 failing "$L_NOISE" "$L_MIRROR"
+verdict 1 failing "$L_NOISE"
+
+# the node key never shows in the verdict output
+ops_setup
+route GET "$PANEL/application.readLogs" "$(jq -n --arg t "$L_START
+failed against $CANARY_RPC" '$t')"
+run bash "$INDEXER"
+if grep -q -- "$CANARY_RPC_KEY" "$T/out" "$T/err"; then fail "indexer-status leaked the node key"; fi
+ok
+
+# a log read that fails is passed on
+ops_setup
+route GET "$PANEL/application.readLogs" '{"message":"boom"}' 500
+run bash "$INDEXER"
+expect_rc 4 "indexer-status with a failing read"
+ok
+
 
 # ---- final leak scan ------------------------------------------------------------------------------
 
