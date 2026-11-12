@@ -43,6 +43,9 @@ jobs:
           test -f "$report"
           grep -q '<testcase' "$report"
 
+      - name: Self-test the image tag script
+        run: bash scripts/image-tags.test.sh
+
       # The image that Dokploy builds from main is built here from the same Dockerfile and has to boot.
       - name: Build the container image
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t latifi-api:ci .
