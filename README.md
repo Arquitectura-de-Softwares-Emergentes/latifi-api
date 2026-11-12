@@ -62,6 +62,8 @@ A push to `main` or a `vMAJOR.MINOR.PATCH` tag runs the `publish-image` workflow
 
 The image path is `ghcr.io/arquitectura-de-softwares-emergentes/latifi-api`. `scripts/image-tags.sh` computes the tags and refuses every other ref, so nothing publishes from a feature branch. `bash scripts/image-tags.test.sh` checks it offline. The first push from a workflow can leave the package private. To fix it, open the package settings on GitHub and change the visibility to public.
 
+The step by step deployment on Dokploy, with its scripts and failure playbook, is in [docs/DEPLOY-DOKPLOY.md](docs/DEPLOY-DOKPLOY.md).
+
 Dokploy builds this same Dockerfile from `main`. The image holds no secret and no setting: it reads every variable of the Configuration table from the environment at start. Behind the reverse proxy, set `SERVER_FORWARD_HEADERS_STRATEGY=framework` and `LATIFI_TRUST_FORWARDED_FOR=true`, so the app sees the client address and the HTTPS scheme.
 
 ## Configuration

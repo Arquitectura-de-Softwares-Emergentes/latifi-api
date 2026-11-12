@@ -46,6 +46,13 @@ jobs:
       - name: Self-test the image tag script
         run: bash scripts/image-tags.test.sh
 
+      - name: Self-test the Dokploy kit
+        run: bash deploy/dokploy/dokploy.test.sh
+
+      # shellcheck ships on the ubuntu runners.
+      - name: Lint the shell scripts
+        run: shellcheck -S warning deploy/dokploy/*.sh scripts/*.sh
+
       # The image that Dokploy builds from main is built here from the same Dockerfile and has to boot.
       - name: Build the container image
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t latifi-api:ci .

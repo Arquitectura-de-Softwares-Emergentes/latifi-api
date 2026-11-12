@@ -4,6 +4,7 @@ target
 docs
 openapi
 scripts
+deploy
 .env
 .env.*
 .idea
