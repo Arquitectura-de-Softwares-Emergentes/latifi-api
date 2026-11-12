@@ -42,6 +42,28 @@ export LATIFI_JWT_SECRET=...   # at least 32 bytes
 
 Swagger UI is at `http://localhost:8080/swagger-ui.html` and the generated document at `/v3/api-docs`. Both are public. Set `LATIFI_SWAGGER_ENABLED=false` to turn them off. The contract file `openapi/latifi-api.v0.yaml` stays the source of truth.
 
+## Container image
+
+The repository has a `Dockerfile` with two stages. The first stage builds the jar from source and never needs a database. The second stage runs it on a Java 21 JRE as the unprivileged user `10001`, with a `HEALTHCHECK` that calls `/actuator/health` and expects `"status":"UP"`. Both base images are pinned by digest, and the image carries the OCI labels `source`, `revision` and `title`.
+
+The `ci` check builds this image on every pull request and smoke tests it. The smoke test starts the image against a throwaway PostgreSQL 16 and checks health, Swagger UI, `/v3/api-docs`, a 401 on a protected route and a real wallet challenge. A second run with a signing secret that is too short must fail, so a green smoke test means something. To do the same on your machine, you need Docker and curl:
+
+```
+docker build --build-arg GIT_SHA="$(git rev-parse HEAD)" -t latifi-api:local .
+bash scripts/image-smoke.sh latifi-api:local
+```
+
+A push to `main` or a `vMAJOR.MINOR.PATCH` tag runs the `publish-image` workflow. It builds the same Dockerfile, smoke tests it again and only then pushes to GHCR:
+
+| Ref | Tags |
+| --- | ---- |
+| `main` | `sha-<7 characters>` and `main` |
+| `v1.2.3` | `sha-<7 characters>`, `1.2.3`, `1.2` and `latest` |
+
+The image path is `ghcr.io/arquitectura-de-softwares-emergentes/latifi-api`. `scripts/image-tags.sh` computes the tags and refuses every other ref, so nothing publishes from a feature branch. `bash scripts/image-tags.test.sh` checks it offline. The first push from a workflow can leave the package private. To fix it, open the package settings on GitHub and change the visibility to public.
+
+Dokploy builds this same Dockerfile from `main`. The image holds no secret and no setting: it reads every variable of the Configuration table from the environment at start. Behind the reverse proxy, set `SERVER_FORWARD_HEADERS_STRATEGY=framework` and `LATIFI_TRUST_FORWARDED_FOR=true`, so the app sees the client address and the HTTPS scheme.
+
 ## Configuration
 
 Every environment variable that `src/main/resources/application.yml` reads is in this table. A test fails when a variable is missing here.
