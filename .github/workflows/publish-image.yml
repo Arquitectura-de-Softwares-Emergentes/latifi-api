@@ -1,0 +1,69 @@
+name: publish-image
+
+# Publishes the smoke tested image to GHCR. Never triggered by a pull request event.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The package write scope belongs to this job alone.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # image-tags.sh refuses every ref that must not publish, so a manual run from a feature branch stops here.
+      - name: Compute the image tags
+        run: |
+          tags="$(bash scripts/image-tags.sh)"
+          echo "$tags"
+          {
+            echo "TAGS<<EOF_TAGS"
+            echo "$tags"
+            echo "EOF_TAGS"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the image
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t latifi-api:publish .
+
+      - name: Smoke test the image
+        run: bash scripts/image-smoke.sh latifi-api:publish
+
+      - name: Log in to GHCR
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Tag and push
+        run: |
+          for tag in $TAGS; do
+            docker tag latifi-api:publish "$tag"
+            docker push "$tag"
+          done
+
+      - name: Record the pushed digest
+        run: |
+          first="$(echo "$TAGS" | head -n 1)"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$first")"
+          {
+            echo "### Published image"
+            echo
+            echo "Digest: \`$digest\`"
+            echo
+            echo "Tags:"
+            for tag in $TAGS; do echo "- \`$tag\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
