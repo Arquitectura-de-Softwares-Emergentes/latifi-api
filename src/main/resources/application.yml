@@ -5,10 +5,66 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/latifi}
     username: ${SPRING_DATASOURCE_USERNAME:latifi}
     password: ${SPRING_DATASOURCE_PASSWORD}
-  jpa:
-    open-in-view: false
-    hibernate:
-      ddl-auto: none
+  messages:
+    basename: messages
+    fallback-to-system-locale: false
+
+latifi:
+  auth:
+    domain: ${LATIFI_AUTH_DOMAIN:localhost}
+    uri: ${LATIFI_AUTH_URI:http://localhost:8080}
+    challenge-ttl: PT5M
+    cleanup-interval: PT1H
+    cleanup-retention: PT24H
+  jwt:
+    secret: ${LATIFI_JWT_SECRET}
+    ttl: PT15M
+    issuer: latifi-api
+  ratelimit:
+    auth-per-ip-capacity: 30
+    auth-per-ip-period: PT1M
+    challenge-per-address-capacity: 5
+    challenge-per-address-period: PT1M
+    trust-forwarded-for: ${LATIFI_TRUST_FORWARDED_FOR:false}
+  chain:
+    id: 80002
+    # The public node URL can carry an API key, so it has no default and never enters the repository.
+    rpc-url: ${LATIFI_RPC_URL:}
+    loan-book-address: ${LATIFI_LOANBOOK_ADDRESS:0xccb8ad15a4954138c987a77924ceab468a843266}
+  indexer:
+    enabled: true
+    poll-interval: PT5S
+    batch-size: 500
+    reorg-window: 12
+    start-block: ${LATIFI_INDEXER_START_BLOCK:51675536}
+  reputation:
+    start-score: 500
+    on-time-delta: 20
+    late-per-day: 5
+    late-cap: 100
+    default-delta: 200
+    profile-bonus: 50
+    min-scored-principal: 1000000
+  fx:
+    # The default is the open endpoint of ExchangeRate-API, an aggregator and not a central bank.
+    # Its terms ask for the attribution text "Rates By Exchange Rate API" with a link to
+    # https://www.exchangerate-api.com. A URL that holds the {apiKey} placeholder needs a key.
+    provider-url: ${LATIFI_FX_PROVIDER_URL:https://open.er-api.com/v6/latest/USD}
+    api-key: ${LATIFI_FX_API_KEY:}
+    supported: [PEN, COP, MXN, ARS, BRL, CLP]
+    cache-ttl: PT1H
+    connect-timeout: PT2S
+    read-timeout: PT3S
+    retry-backoff: PT1M
+
+springdoc:
+  # The documentation is public by design. Phase 7 can switch both off through one variable.
+  api-docs:
+    path: /v3/api-docs
+    enabled: ${LATIFI_SWAGGER_ENABLED:true}
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${LATIFI_SWAGGER_ENABLED:true}
 
 management:
   endpoints:

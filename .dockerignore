@@ -1,0 +1,13 @@
+.git
+.github
+target
+docs
+openapi
+scripts
+deploy
+.env
+.env.*
+.idea
+.vscode
+*.log
+.DS_Store
