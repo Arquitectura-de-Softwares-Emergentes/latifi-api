@@ -16,7 +16,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -42,3 +42,21 @@ jobs:
           report=target/surefire-reports/TEST-com.latifi.api.bdd.RunCucumberTest.xml
           test -f "$report"
           grep -q '<testcase' "$report"
+
+      # The image that Dokploy builds from main is built here from the same Dockerfile and has to boot.
+      - name: Build the container image
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t latifi-api:ci .
+
+      - name: Smoke test the image
+        run: bash scripts/image-smoke.sh latifi-api:ci
+
+      # A signing secret under 32 bytes must stop the application, so a green smoke test means something.
+      - name: Smoke test must reject a short signing secret
+        run: |
+          if out="$(bash scripts/image-smoke.sh --jwt-secret short latifi-api:ci 2>&1)"; then
+            echo "negative smoke: the image accepted a short secret" >&2
+            exit 1
+          fi
+          # The rejection has to come from the secret check and not from some other breakage.
+          echo "$out" | grep -q 'LATIFI_JWT_SECRET is too short'
+          echo "negative smoke: rejected"
