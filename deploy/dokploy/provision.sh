@@ -41,6 +41,10 @@ AMOY_MANIFEST="${LATIFI_AMOY_MANIFEST:-$REPO_ROOT/../latifi-contracts/deployment
 
 KEYS="SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD LATIFI_JWT_SECRET LATIFI_AUTH_DOMAIN LATIFI_AUTH_URI LATIFI_TRUST_FORWARDED_FOR SERVER_FORWARD_HEADERS_STRATEGY LATIFI_RPC_URL LATIFI_LOANBOOK_ADDRESS LATIFI_INDEXER_START_BLOCK LATIFI_SWAGGER_ENABLED"
 
+# Optional keys: sent only when the file gives a value. A free-tier Alchemy node allows 10 blocks per
+# eth_getLogs call, so set LATIFI_INDEXER_BATCH_SIZE=10 there. The default of the API is 500.
+OPTIONAL_KEYS="LATIFI_INDEXER_BATCH_SIZE"
+
 usage() {
   sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
@@ -123,7 +127,7 @@ done
 
 # Names of keys in the file that the kit does not send. Names only.
 is_managed() {
-  case " $KEYS " in
+  case " $KEYS $OPTIONAL_KEYS " in
     *" $1 "*) return 0 ;;
   esac
   return 1
@@ -146,6 +150,7 @@ RPC_URL="$(val LATIFI_RPC_URL)"
 LOANBOOK="$(val LATIFI_LOANBOOK_ADDRESS)"
 START_BLOCK="$(val LATIFI_INDEXER_START_BLOCK)"
 SWAGGER="$(val LATIFI_SWAGGER_ENABLED)"
+BATCH_SIZE="$(val LATIFI_INDEXER_BATCH_SIZE)"
 
 dk_add_secret "$DB_PASSWORD"
 dk_add_secret "$JWT_SECRET"
@@ -183,6 +188,10 @@ fi
 printf '%s' "$START_BLOCK" | grep -Eq '^[0-9]+$' || invalid LATIFI_INDEXER_START_BLOCK "digits only"
 [ "${#START_BLOCK}" -le 15 ] || invalid LATIFI_INDEXER_START_BLOCK "too long to be a block number"
 [ "$START_BLOCK" -ge "$DEPLOYMENT_BLOCK" ] || invalid LATIFI_INDEXER_START_BLOCK "below the deployment block $DEPLOYMENT_BLOCK"
+if [ -n "$BATCH_SIZE" ]; then
+  printf '%s' "$BATCH_SIZE" | grep -Eq '^[0-9]{1,3}$' || invalid LATIFI_INDEXER_BATCH_SIZE "digits only, 1 to 500"
+  { [ "$BATCH_SIZE" -ge 1 ] && [ "$BATCH_SIZE" -le 500 ]; } || invalid LATIFI_INDEXER_BATCH_SIZE "must be between 1 and 500"
+fi
 
 [ "$TRUST_XFF" = "true" ] || invalid LATIFI_TRUST_FORWARDED_FOR "must be true behind Traefik"
 [ "$FWD_STRATEGY" = "framework" ] || invalid SERVER_FORWARD_HEADERS_STRATEGY "must be framework"
@@ -213,6 +222,7 @@ print_plan() {
   echo "    LATIFI_LOANBOOK_ADDRESS=$LOANBOOK"
   echo "    LATIFI_INDEXER_START_BLOCK=$START_BLOCK"
   echo "    LATIFI_SWAGGER_ENABLED=$SWAGGER"
+  [ -z "$BATCH_SIZE" ] || echo "    LATIFI_INDEXER_BATCH_SIZE=$BATCH_SIZE"
   if [ "$DEPLOY" -eq 1 ]; then
     echo "  deploy:      queued at the end"
   else
@@ -237,6 +247,8 @@ for k in $KEYS; do
   ENV_TEXT="$ENV_TEXT$k=$(val "$k")
 "
 done
+[ -z "$BATCH_SIZE" ] || ENV_TEXT="${ENV_TEXT}LATIFI_INDEXER_BATCH_SIZE=$BATCH_SIZE
+"
 ENV_TEXT="${ENV_TEXT%$'\n'}"
 
 projects="$(dk_api GET project.all)" || exit 4
