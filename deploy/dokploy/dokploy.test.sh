@@ -168,6 +168,12 @@ write_app_env() {
       printf '%s=%s\n' "$k" "$v" >> "$LATIFI_HOME/latifi-api.env"
     fi
   done
+  # The optional key is written only when a case sets it.
+  for a in "$@"; do
+    case "$a" in
+      LATIFI_INDEXER_BATCH_SIZE=*) printf '%s\n' "$a" >> "$LATIFI_HOME/latifi-api.env" ;;
+    esac
+  done
   chmod 600 "$LATIFI_HOME/latifi-api.env"
 }
 
@@ -221,10 +227,11 @@ START_BLOCK="$HERE/start-block.sh"
 
 # ---- task 1: provisioning ------------------------------------------------------------------------
 
-# 1. the example file holds no value and all twelve keys.
+# 1. the example file holds no value, the twelve required keys and the optional batch size.
 if grep -Eq '^[A-Z_]+=.+' "$HERE/app.env.example"; then fail "app.env.example carries a value"; fi
 n="$(grep -Ec '^[A-Z_]+=$' "$HERE/app.env.example")"
-[ "$n" -eq 12 ] || fail "app.env.example has $n keys, expected 12"
+[ "$n" -eq 13 ] || fail "app.env.example has $n keys, expected 13 (12 required and 1 optional)"
+grep -q '^LATIFI_INDEXER_BATCH_SIZE=$' "$HERE/app.env.example" || fail "app.env.example lacks the optional LATIFI_INDEXER_BATCH_SIZE"
 reset
 for k in $KEYS; do grep -q "^$k=\$" "$HERE/app.env.example" || fail "app.env.example lacks $k"; done
 ok
@@ -280,6 +287,22 @@ check_invalid SERVER_FORWARD_HEADERS_STRATEGY "SERVER_FORWARD_HEADERS_STRATEGY=n
 check_invalid LATIFI_SWAGGER_ENABLED "LATIFI_SWAGGER_ENABLED=false"
 check_invalid SPRING_DATASOURCE_USERNAME 'SPRING_DATASOURCE_USERNAME=la"tifi'
 check_invalid SPRING_DATASOURCE_USERNAME "SPRING_DATASOURCE_USERNAME=la tifi"
+check_invalid LATIFI_INDEXER_BATCH_SIZE "LATIFI_INDEXER_BATCH_SIZE=0"
+check_invalid LATIFI_INDEXER_BATCH_SIZE "LATIFI_INDEXER_BATCH_SIZE=501"
+check_invalid LATIFI_INDEXER_BATCH_SIZE "LATIFI_INDEXER_BATCH_SIZE=ten"
+
+# The optional batch size shows in the plan when the file sets it and stays out when it does not.
+reset
+write_app_env "LATIFI_INDEXER_BATCH_SIZE=10"
+run bash "$PROVISION" --host "$HOST"
+expect_rc 0 "batch size 10"
+grep -q 'LATIFI_INDEXER_BATCH_SIZE=10' "$T/out" || fail "dry run omits the batch size"
+reset
+write_app_env
+run bash "$PROVISION" --host "$HOST"
+expect_rc 0 "no batch size"
+if grep -q 'LATIFI_INDEXER_BATCH_SIZE' "$T/out"; then fail "dry run shows a batch size nobody set"; fi
+ok
 check_invalid SPRING_DATASOURCE_PASSWORD "SPRING_DATASOURCE_PASSWORD=Canary/Pass12345"
 check_invalid SPRING_DATASOURCE_URL "SPRING_DATASOURCE_URL=jdbc:postgresql://shared-postgres:5432/latifi?password=x"
 
